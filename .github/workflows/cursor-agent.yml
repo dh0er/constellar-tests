@@ -1,0 +1,45 @@
+name: Fix CI Failures
+
+on:
+    workflow_run:
+        workflows: [Test]
+        types: [completed]
+
+permissions:
+    contents: write
+    pull-requests: write
+    actions: read
+
+jobs:
+    attempt-fix:
+        if: >-
+            ${{ github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.name != 'Fix CI Failures' }}
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Install Cursor CLI
+              run: |
+                  curl https://cursor.com/install -fsS | bash
+                  echo "$HOME/.cursor/bin" >> $GITHUB_PATH
+
+            - name: Configure git identity
+              run: |
+                  git config user.name "Cursor Agent"
+                  git config user.email "cursoragent@cursor.com"
+
+            - name: Fix CI failure
+              env:
+                  CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+                  MODEL: gpt-5
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  BRANCH_PREFIX: ci-fix
+                  GITHUB_REPOSITORY: ${{ secrets.GITHUB_REPOSITORY }}
+                  GITHUB_REPOSITORY_OWNER: ${{ secrets.GITHUB_REPOSITORY_OWNER }}
+                  GITHUB_REPOSITORY_NAME: ${{ secrets.GITHUB_REPOSITORY_NAME }}
+              run: |
+                  .github/workflows/scripts/run-cursor.sh
+
