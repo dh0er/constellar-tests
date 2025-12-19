@@ -70,5 +70,5 @@ jobs:
                   # Where the target repo was cloned to.
                   TARGET_WORKDIR: repo
               run: |
-                  .github/workflows/scripts/run-cursor.sh
+                  .github/scripts/run-cursor.sh
 
