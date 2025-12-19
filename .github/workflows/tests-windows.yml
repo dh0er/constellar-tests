@@ -16,13 +16,12 @@ jobs:
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.REPO_SSH_KEY }}
-      - name: Trust github.com host key
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.ssh" | Out-Null
-          ssh-keyscan github.com | Out-File -FilePath "$env:USERPROFILE\.ssh\known_hosts" -Append -Encoding ascii
       - name: Clone repository
         shell: pwsh
+        env:
+          # Avoid ssh-keyscan on Windows runners (can fail due to KEX mismatch depending on ssh-keyscan binary).
+          # Let OpenSSH accept GitHub's host key on first use.
+          GIT_SSH_COMMAND: ssh -o StrictHostKeyChecking=accept-new
         run: git clone "${{ secrets.REPO_PATH }}" repo
       - uses: actions/setup-python@v5
         with:
