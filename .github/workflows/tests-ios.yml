@@ -1,0 +1,35 @@
+name: iOS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run tests on iOS Simulator
+    runs-on: macos-latest
+    env:
+      REPO_PATH: ${{ secrets.REPO_PATH }}
+      ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone repository
+        run: git clone ${{ secrets.REPO_PATH }} repo
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.38.1"
+          channel: "stable"
+          cache: true
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+      - name: Run interpreter (execute 'run' steps from cloned workflow)
+        run: ruby .github/scripts/run_workflow_run_steps.rb --workflow repo/.github/workflows/tests-ios.yml --job layer1-tests --default-working-directory repo
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: layer1-screenshots-ios
+          path: repo/integration_test/screenshots/
+          if-no-files-found: ignore
