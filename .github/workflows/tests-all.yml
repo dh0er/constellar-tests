@@ -20,12 +20,12 @@ jobs:
             fail-fast: false
             matrix:
                 workflow_file:
-                    # - tests-ios.yml
+                    - tests-ios.yml
                     - tests-android.yml
                     - tests-web.yml
-                    # - tests-macos.yml
-                    # - tests-windows.yml
-                    # - tests-linux.yml
+                    - tests-macos.yml
+                    - tests-windows.yml
+                    - tests-linux.yml
         steps:
             - name: Trigger ${{ matrix.workflow_file }}
               uses: actions/github-script@v7

@@ -69,7 +69,7 @@ jobs:
           disable-linux-hw-accel: false
           emulator-boot-timeout: 900
           disable-animations: true
-          script: cd repo && ./scripts/github/tests-android/layer1-tests/run-tests.sh
+          script: cd repo && ./.github/scripts/tests-android/layer1-tests/run-tests.sh
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
