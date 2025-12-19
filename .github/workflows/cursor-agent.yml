@@ -2,7 +2,9 @@ name: Fix CI Failures
 
 on:
     workflow_run:
-        workflows: [Test]
+        # These names must match the `name:` field in the workflows you want to
+        # react to (not the filename).
+        workflows: [Android, iOS, Linux, macOS, Windows, Web]
         types: [completed]
 
 permissions:
@@ -31,15 +33,42 @@ jobs:
                   git config user.name "Cursor Agent"
                   git config user.email "cursoragent@cursor.com"
 
+            # IMPORTANT: The workflows in this repo run tests against a *cloned*
+            # target repo. The agent should propose/fix changes in that target
+            # repo, not in this orchestrator repo.
+            - name: Setup SSH (deploy key) for target repo
+              uses: webfactory/ssh-agent@v0.9.0
+              with:
+                  ssh-private-key: ${{ secrets.REPO_SSH_KEY }}
+
+            - name: Trust github.com host key
+              run: |
+                  set -euo pipefail
+                  mkdir -p ~/.ssh
+                  ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+            - name: Clone target repository
+              env:
+                  REPO_PATH: ${{ secrets.REPO_PATH }}
+              run: |
+                  set -euo pipefail
+                  git clone "${REPO_PATH}" repo
+
             - name: Fix CI failure
               env:
                   CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-                  MODEL: gpt-5
+                  MODEL: gpt-5.2
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   BRANCH_PREFIX: ci-fix
-                  GITHUB_REPOSITORY: ${{ secrets.GITHUB_REPOSITORY }}
-                  GITHUB_REPOSITORY_OWNER: ${{ secrets.GITHUB_REPOSITORY_OWNER }}
-                  GITHUB_REPOSITORY_NAME: ${{ secrets.GITHUB_REPOSITORY_NAME }}
+                  # Repo where this workflow_run event happened (this repo).
+                  RUN_REPOSITORY: ${{ github.repository }}
+                  GH_REPOSITORY: ${{ secrets.GH_REPOSITORY }}
+                  GH_REPOSITORY_OWNER: ${{ secrets.GH_REPOSITORY_OWNER }}
+                  GH_REPOSITORY_NAME: ${{ secrets.GH_REPOSITORY_NAME }}
+                  GH_RUN_ID: ${{ github.event.workflow_run.id }}
+                  GH_RUN_URL: ${{ github.event.workflow_run.html_url }}
+                  # Where the target repo was cloned to.
+                  TARGET_WORKDIR: repo
               run: |
                   .github/workflows/scripts/run-cursor.sh
 
