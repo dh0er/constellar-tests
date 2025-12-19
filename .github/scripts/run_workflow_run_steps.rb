@@ -120,6 +120,7 @@ class WorkflowRunInterpreter
   def exec_step(cmd, shell:, workdir:, env:)
     log "workdir=#{workdir}"
     log "shell=#{shell}"
+    log "command=#{cmd.inspect}"
 
     stdout_str = +""
     stderr_str = +""
