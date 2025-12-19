@@ -12,8 +12,17 @@ jobs:
       ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
     steps:
       - uses: actions/checkout@v4
+      - name: Setup SSH (deploy key)
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.REPO_SSH_KEY }}
+      - name: Trust github.com host key
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Clone repository
-        run: git clone ${{ secrets.REPO_PATH }} repo
+        run: git clone "${{ secrets.REPO_PATH }}" repo
       - name: Free disk space
         uses: jlumbroso/free-disk-space@main
         with:
