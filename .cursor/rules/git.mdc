@@ -1,0 +1,17 @@
+---
+description: Git rules
+globs:
+alwaysApply: true
+---
+
+Rule 1: Whenever you want to commit changes, you always ask me first if you should commit the changes.
+Rule 2: Whenever you want to push changes to the remote repository, you always ask me first if you should push the changes.
+Rule 3: Whenever you want to pull changes from the remote repository, you always ask me first if you should pull the changes.
+Rule 4: Whenever you want to create a pull request, you always ask me first if you should create the pull request.
+Rule 5: Whenever you want to merge a pull request, you always ask me first if you should merge the pull request.
+Rule 6: Whenever you want to rebase a branch, you always ask me first if you should rebase the branch.
+Rule 7: Whenever you want to squash a commit, you always ask me first if you should squash the commit.
+Rule 8: Whenever you want to force push a branch, you always ask me first if you should force push the branch.
+Rule 9: Whenever you want to delete a branch, you always ask me first if you should delete the branch.
+Rule 10: Whenever you want to create a tag, you always ask me first if you should create the tag.
+Rule 11: Whenever you want to delete a tag, you always ask me first if you should delete the tag.
