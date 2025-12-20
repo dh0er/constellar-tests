@@ -208,7 +208,7 @@ sleep_seconds="${CURSOR_AGENT_RETRY_SLEEP_SECONDS:-10}"
 while true; do
     echo "Running cursor-agent (attempt ${attempt}/${max_attempts})..."
     set +e
-    OUTPUT="$(cursor-agent -p "$PROMPT" --force --model "$MODEL" --output-format=text 2>&1)"
+    OUTPUT="$(CURSOR_AGENT_AUTOMATION=true cursor-agent -p "$PROMPT" --force --model "$MODEL" --output-format=text 2>&1)"
     EXIT_CODE=$?
     set -e
 
