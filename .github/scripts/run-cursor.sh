@@ -86,6 +86,15 @@ if [[ -n "${TARGET_WORKDIR}" ]]; then
     cd "${TARGET_WORKDIR}"
 fi
 
+# If a token is provided for the target repo, prefer HTTPS auth for pushes.
+# This avoids "deploy key is read-only" failures when the clone used SSH.
+if [[ -n "${TARGET_GH_TOKEN:-}" ]]; then
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        # Avoid printing the token by ensuring xtrace is off (script doesn't use -x).
+        git remote set-url origin "https://x-access-token:${TARGET_GH_TOKEN}@github.com/${TARGET_OWNER}/${TARGET_REPO}.git" >/dev/null 2>&1 || true
+    fi
+fi
+
 # Default branch is the fallback base when there is no associated PR.
 # In this workflow, GH_TOKEN is often the workflow's GITHUB_TOKEN which may not
 # have access to the target repo via API (404). Prefer deriving from the local
@@ -114,25 +123,30 @@ if [[ -z "$TARGET_DEFAULT_BRANCH" ]]; then
     fi
 fi
 
-cursor-agent -p "You are operating in a GitHub Actions runner.
+PROMPT="$(cat <<'EOF'
+You are operating in a GitHub Actions runner.
 
-The GitHub CLI is available as \`gh\` and authenticated via \`GH_TOKEN\`. Git is available.
+The GitHub CLI is available as `gh` and authenticated via `GH_TOKEN`. Git is available.
 
 IMPORTANT: There are TWO repositories involved:
 1) RUN_REPOSITORY: where this GitHub Actions workflow_run happened (where GH_RUN_ID/GH_RUN_URL point).
 2) TARGET_REPOSITORY: the repository whose code you must change. You are currently running with your working directory set to the TARGET repo checkout. Do NOT modify files outside the target repo checkout.
 
-# Context:
-- RUN_REPOSITORY: ${RUN_REPOSITORY}
-- Workflow Run ID (RUN_REPOSITORY): ${GH_RUN_ID}
-- Workflow Run URL (RUN_REPOSITORY): ${GH_RUN_URL}
-- Associated PR Number (RUN_REPOSITORY, may be empty): ${PR_NUMBER}
+# Auth
+- `GH_TOKEN` is set for GitHub API/PR actions.
+- If `TARGET_GH_TOKEN` is set, the script has already configured the target repo's `origin` remote to use HTTPS token auth (to avoid "deploy key is read-only" push failures).
 
-- TARGET_REPOSITORY: ${TARGET_REPOSITORY}
-- Target owner: ${TARGET_OWNER}
-- Target repo: ${TARGET_REPO}
-- Target default branch: ${TARGET_DEFAULT_BRANCH}
-- Fix Branch Prefix: ${BRANCH_PREFIX}
+# Context (values)
+- RUN_REPOSITORY: __RUN_REPOSITORY_VALUE__
+- Workflow Run ID (RUN_REPOSITORY): __GH_RUN_ID_VALUE__
+- Workflow Run URL (RUN_REPOSITORY): __GH_RUN_URL_VALUE__
+- Associated PR Number (RUN_REPOSITORY, may be empty): __PR_NUMBER_VALUE__
+
+- TARGET_REPOSITORY: __TARGET_REPOSITORY_VALUE__
+- Target owner: __TARGET_OWNER_VALUE__
+- Target repo: __TARGET_REPO_VALUE__
+- Target default branch: __TARGET_DEFAULT_BRANCH_VALUE__
+- Fix Branch Prefix: __BRANCH_PREFIX_VALUE__
 
 # Goal:
 - Implement an end-to-end CI fix flow for a failed workflow run.
@@ -154,12 +168,14 @@ IMPORTANT: There are TWO repositories involved:
 
 # Inputs and conventions:
 - Use `gh api`, `gh run view`, `gh pr view`, `gh pr diff`, `gh pr list`, `gh run download`, and git commands as needed.
+- NEVER run `gh run view` without a run id argument (use the run id from Context).
+- NEVER put `--repo ...` on its own line; it must be part of the same `gh ...` command.
 - For ANY `gh` command, always target the intended repo explicitly:
   - Run/workflow metadata MUST target RUN_REPOSITORY:
     - Prefer explicit REST endpoints like `gh api repos/$RUN_REPOSITORY/actions/runs/$GH_RUN_ID`
-    - Or pass `--repo \"$RUN_REPOSITORY\"` (e.g. `gh run view $GH_RUN_ID --repo \"$RUN_REPOSITORY\"`)
+    - Or pass `--repo "$RUN_REPOSITORY"` (e.g. `gh run view "$GH_RUN_ID" --repo "$RUN_REPOSITORY"`)
   - Target-repo PR creation MUST target TARGET_REPOSITORY:
-    - Pass `--repo \"$TARGET_REPOSITORY\"` for `gh pr create`, `gh pr view`, etc.
+    - Pass `--repo "$TARGET_REPOSITORY"` for `gh pr create`, `gh pr view`, etc.
 - Never run `gh pr create` without an explicit `--repo` flag.
 - When pushing commits / creating PRs, operate on TARGET_REPOSITORY (your current working directory is the target repo checkout).
 - Avoid duplicate comments; if a previous bot comment exists, update it instead of posting a new one.
@@ -167,4 +183,17 @@ IMPORTANT: There are TWO repositories involved:
 # Deliverables when updates occur:
 - If PR-associated: pushed commits to the persistent fix branch for the PR head, and a single PR comment with a quick-create compare link.
 - If not PR-associated: a PR opened from the fix branch into the default branch.
-" --force --model "$MODEL" --output-format=text
+EOF
+)"
+
+PROMPT="${PROMPT//__RUN_REPOSITORY_VALUE__/${RUN_REPOSITORY}}"
+PROMPT="${PROMPT//__GH_RUN_ID_VALUE__/${GH_RUN_ID:-}}"
+PROMPT="${PROMPT//__GH_RUN_URL_VALUE__/${GH_RUN_URL:-}}"
+PROMPT="${PROMPT//__PR_NUMBER_VALUE__/${PR_NUMBER:-}}"
+PROMPT="${PROMPT//__TARGET_REPOSITORY_VALUE__/${TARGET_REPOSITORY}}"
+PROMPT="${PROMPT//__TARGET_OWNER_VALUE__/${TARGET_OWNER}}"
+PROMPT="${PROMPT//__TARGET_REPO_VALUE__/${TARGET_REPO}}"
+PROMPT="${PROMPT//__TARGET_DEFAULT_BRANCH_VALUE__/${TARGET_DEFAULT_BRANCH}}"
+PROMPT="${PROMPT//__BRANCH_PREFIX_VALUE__/${BRANCH_PREFIX}}"
+
+cursor-agent -p "$PROMPT" --force --model "$MODEL" --output-format=text

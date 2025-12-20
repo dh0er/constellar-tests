@@ -58,7 +58,13 @@ jobs:
               env:
                   CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
                   MODEL: gpt-5.2
-                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  # IMPORTANT:
+                  # - `github.token` / `secrets.GITHUB_TOKEN` often cannot access a *different* private target repo (it will 404).
+                  # - Provide a fine-grained PAT (or GitHub App token) with access to BOTH:
+                  #   - this orchestrator repo (to read the workflow run / comment on PRs)
+                  #   - the target repo (to push branches / open PRs)
+                  GH_TOKEN: ${{ secrets.CURSOR_AGENT_GH_TOKEN || github.token }}
+                  TARGET_GH_TOKEN: ${{ secrets.CURSOR_AGENT_GH_TOKEN || '' }}
                   BRANCH_PREFIX: ci-fix
                   # Repo where this workflow_run event happened (this repo).
                   RUN_REPOSITORY: ${{ github.repository }}
