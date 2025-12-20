@@ -196,4 +196,35 @@ PROMPT="${PROMPT//__TARGET_REPO_VALUE__/${TARGET_REPO}}"
 PROMPT="${PROMPT//__TARGET_DEFAULT_BRANCH_VALUE__/${TARGET_DEFAULT_BRANCH}}"
 PROMPT="${PROMPT//__BRANCH_PREFIX_VALUE__/${BRANCH_PREFIX}}"
 
-cursor-agent -p "$PROMPT" --force --model "$MODEL" --output-format=text
+echo "cursor-agent path: $(command -v cursor-agent || echo 'not found')"
+echo "cursor-agent version:"
+cursor-agent --version 2>/dev/null || true
+
+# Retry transient Cursor connectivity errors (e.g., "ConnectError: [unavailable]").
+max_attempts="${CURSOR_AGENT_MAX_ATTEMPTS:-4}"
+attempt=1
+sleep_seconds="${CURSOR_AGENT_RETRY_SLEEP_SECONDS:-10}"
+
+while true; do
+    echo "Running cursor-agent (attempt ${attempt}/${max_attempts})..."
+    set +e
+    OUTPUT="$(cursor-agent -p "$PROMPT" --force --model "$MODEL" --output-format=text 2>&1)"
+    EXIT_CODE=$?
+    set -e
+
+    echo "$OUTPUT"
+
+    if [[ $EXIT_CODE -eq 0 ]]; then
+        break
+    fi
+
+    if echo "$OUTPUT" | grep -q "ConnectError: \\[unavailable\\]" && [[ $attempt -lt $max_attempts ]]; then
+        echo "cursor-agent connection unavailable; retrying in ${sleep_seconds}s..."
+        sleep "$sleep_seconds"
+        attempt=$((attempt + 1))
+        sleep_seconds=$((sleep_seconds * 2))
+        continue
+    fi
+
+    exit "$EXIT_CODE"
+done
