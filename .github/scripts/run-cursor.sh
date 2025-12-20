@@ -1,7 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 
-RUN_REPOSITORY="${RUN_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
+normalize_repo_slug() {
+    # Accept:
+    # - owner/repo
+    # - https://github.com/owner/repo(.git)
+    # - git@github.com:owner/repo(.git)
+    local input="${1:-}"
+    input="${input#https://github.com/}"
+    input="${input#http://github.com/}"
+    input="${input#git@github.com:}"
+    input="${input%.git}"
+    echo "$input"
+}
+
+RUN_REPOSITORY="$(normalize_repo_slug "${RUN_REPOSITORY:-${GITHUB_REPOSITORY:-}}")"
 
 # The workflow run lives in RUN_REPOSITORY (this/orchestrator repo).
 RUN_OWNER=""
@@ -12,7 +25,7 @@ if [[ -n "${RUN_REPOSITORY}" ]]; then
 fi
 
 # The code we should fix lives in GH_REPOSITORY (target repo).
-TARGET_REPOSITORY="${GH_REPOSITORY:-}"
+TARGET_REPOSITORY="$(normalize_repo_slug "${GH_REPOSITORY:-}")"
 TARGET_OWNER="${GH_REPOSITORY_OWNER:-}"
 TARGET_REPO="${GH_REPOSITORY_NAME:-}"
 
@@ -68,12 +81,37 @@ if [[ -n "${GH_RUN_ID:-}" ]]; then
     PR_NUMBER=$(gh api "repos/$RUN_OWNER/$RUN_REPO/actions/runs/$GH_RUN_ID" --jq '.pull_requests[0].number // ""')
 fi
 
-# Default branch is the fallback base when there is no associated PR.
-TARGET_DEFAULT_BRANCH=$(gh api "repos/$TARGET_OWNER/$TARGET_REPO" --jq '.default_branch')
-
 # Ensure we run the agent *inside* the target repository checkout.
 if [[ -n "${TARGET_WORKDIR}" ]]; then
     cd "${TARGET_WORKDIR}"
+fi
+
+# Default branch is the fallback base when there is no associated PR.
+# In this workflow, GH_TOKEN is often the workflow's GITHUB_TOKEN which may not
+# have access to the target repo via API (404). Prefer deriving from the local
+# clone, and only use the API if it works.
+TARGET_DEFAULT_BRANCH="${TARGET_DEFAULT_BRANCH:-}"
+if [[ -z "$TARGET_DEFAULT_BRANCH" ]]; then
+    # 1) Try from local git remote HEAD (works with deploy-key clones).
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        TARGET_DEFAULT_BRANCH="$(
+            git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null \
+                | sed 's#^origin/##' \
+                || true
+        )"
+    fi
+
+    # 2) Fallback to GitHub API if accessible.
+    if [[ -z "$TARGET_DEFAULT_BRANCH" ]]; then
+        TARGET_DEFAULT_BRANCH="$(
+            gh api "repos/$TARGET_OWNER/$TARGET_REPO" --jq '.default_branch' 2>/dev/null || true
+        )"
+    fi
+
+    # 3) Last-resort fallback.
+    if [[ -z "$TARGET_DEFAULT_BRANCH" ]]; then
+        TARGET_DEFAULT_BRANCH="main"
+    fi
 fi
 
 cursor-agent -p "You are operating in a GitHub Actions runner.
