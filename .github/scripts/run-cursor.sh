@@ -86,6 +86,23 @@ if [[ -n "${TARGET_WORKDIR}" ]]; then
     cd "${TARGET_WORKDIR}"
 fi
 
+# Ensure git commits work in the *target* clone.
+# GitHub Actions runners often have no global author identity configured, and
+# `git config user.*` done in the orchestrator checkout does not apply here.
+# Use per-command environment variables so we never touch git config.
+if [[ -z "${GIT_AUTHOR_NAME:-}" ]]; then
+    export GIT_AUTHOR_NAME="${CURSOR_GIT_AUTHOR_NAME:-Cursor Agent}"
+fi
+if [[ -z "${GIT_AUTHOR_EMAIL:-}" ]]; then
+    export GIT_AUTHOR_EMAIL="${CURSOR_GIT_AUTHOR_EMAIL:-cursoragent@cursor.com}"
+fi
+if [[ -z "${GIT_COMMITTER_NAME:-}" ]]; then
+    export GIT_COMMITTER_NAME="${CURSOR_GIT_COMMITTER_NAME:-${GIT_AUTHOR_NAME}}"
+fi
+if [[ -z "${GIT_COMMITTER_EMAIL:-}" ]]; then
+    export GIT_COMMITTER_EMAIL="${CURSOR_GIT_COMMITTER_EMAIL:-${GIT_AUTHOR_EMAIL}}"
+fi
+
 # If a token is provided for the target repo, prefer HTTPS auth for pushes.
 # This avoids "deploy key is read-only" failures when the clone used SSH.
 if [[ -n "${TARGET_GH_TOKEN:-}" ]]; then

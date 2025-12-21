@@ -28,11 +28,6 @@ jobs:
                   curl https://cursor.com/install -fsS | bash
                   echo "$HOME/.cursor/bin" >> $GITHUB_PATH
 
-            - name: Configure git identity
-              run: |
-                  git config user.name "Cursor Agent"
-                  git config user.email "cursoragent@cursor.com"
-
             # IMPORTANT: The workflows in this repo run tests against a *cloned*
             # target repo. The agent should propose/fix changes in that target
             # repo, not in this orchestrator repo.
