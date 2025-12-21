@@ -2,6 +2,23 @@ name: Windows
 
 on:
   workflow_dispatch:
+    inputs:
+      source_repo:
+        description: "Source repo that triggered this workflow (e.g. dh0er/astrologs)"
+        required: false
+        default: ""
+      source_ref:
+        description: "Git ref in the source repo to test (e.g. refs/pull/123/merge or refs/heads/main)"
+        required: false
+        default: ""
+      source_sha:
+        description: "Commit SHA in the source repo to test (optional)"
+        required: false
+        default: ""
+      source_pr:
+        description: "PR number in the source repo (optional)"
+        required: false
+        default: ""
 
 jobs:
   test:
@@ -23,6 +40,24 @@ jobs:
           # Let OpenSSH accept GitHub's host key on first use.
           GIT_SSH_COMMAND: ssh -o StrictHostKeyChecking=accept-new
         run: git clone "${{ secrets.REPO_PATH }}" repo
+      - name: Checkout requested source ref/SHA (optional)
+        if: ${{ inputs.source_ref != '' || inputs.source_sha != '' }}
+        shell: pwsh
+        working-directory: repo
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ("${{ inputs.source_ref }}" -ne "") {
+            Write-Host "Fetching source ref: ${{ inputs.source_ref }}"
+            git fetch --no-tags --prune origin "${{ inputs.source_ref }}"
+            git checkout --detach FETCH_HEAD
+          } elseif ("${{ inputs.source_sha }}" -ne "") {
+            Write-Host "Checking out source sha: ${{ inputs.source_sha }}"
+            # Try to fetch the object in case it's not present in the clone.
+            try { git fetch --no-tags --prune origin "${{ inputs.source_sha }}" } catch { }
+            git checkout --detach "${{ inputs.source_sha }}"
+          }
+          Write-Host "Checked out commit:"
+          git rev-parse HEAD
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
