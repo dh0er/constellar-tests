@@ -2,6 +2,23 @@ name: iOS
 
 on:
   workflow_dispatch:
+    inputs:
+      source_repo:
+        description: "Source repo that triggered this workflow (e.g. dh0er/astrologs)"
+        required: false
+        default: ""
+      source_ref:
+        description: "Git ref in the source repo to test (e.g. refs/pull/123/merge or refs/heads/main)"
+        required: false
+        default: ""
+      source_sha:
+        description: "Commit SHA in the source repo to test (optional)"
+        required: false
+        default: ""
+      source_pr:
+        description: "PR number in the source repo (optional)"
+        required: false
+        default: ""
 
 jobs:
   test:
@@ -23,6 +40,23 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Clone repository
         run: git clone "${{ secrets.REPO_PATH }}" repo
+      - name: Checkout requested source ref/SHA (optional)
+        if: ${{ inputs.source_ref != '' || inputs.source_sha != '' }}
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.source_ref }}" ]; then
+            echo "Fetching source ref: ${{ inputs.source_ref }}"
+            git fetch --no-tags --prune origin "${{ inputs.source_ref }}"
+            git checkout --detach FETCH_HEAD
+          elif [ -n "${{ inputs.source_sha }}" ]; then
+            echo "Checking out source sha: ${{ inputs.source_sha }}"
+            # Try to fetch the object in case it's not present in the clone.
+            git fetch --no-tags --prune origin "${{ inputs.source_sha }}" || true
+            git checkout --detach "${{ inputs.source_sha }}"
+          fi
+          echo "Checked out commit:"
+          git rev-parse HEAD
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
