@@ -16,6 +16,7 @@ jobs:
     dispatch:
         name: Dispatch all test workflows
         runs-on: ubuntu-slim
+        timeout-minutes: 180
         strategy:
             fail-fast: false
             matrix:
@@ -27,7 +28,7 @@ jobs:
                     - tests-windows.yml
                     - tests-linux.yml
         steps:
-            - name: Trigger ${{ matrix.workflow_file }}
+            - name: Trigger and wait for ${{ matrix.workflow_file }}
               uses: actions/github-script@v7
               with:
                   github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -36,11 +37,87 @@ jobs:
                       const refInput = "${{ inputs.ref }}".trim();
                       const ref = refInput || context.ref.replace(/^refs\/(heads|tags)\//, "");
 
-                      core.info(`Dispatching ${workflow_id} on ref=${ref}`);
+                      const dispatchStartedAtMs = Date.now();
+                      // Resolve the requested ref to an immutable commit SHA so:
+                      // - all dispatched workflows run the exact same commit
+                      // - we can reliably discover the created workflow run via head_sha
+                      let targetSha = context.sha;
+                      if (refInput) {
+                        const commit = await github.rest.repos.getCommit({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          ref: refInput,
+                        });
+                        targetSha = commit.data.sha;
+                      }
+
+                      core.info(`Dispatching ${workflow_id} on ref=${ref} (targetSha=${targetSha})`);
 
                       await github.rest.actions.createWorkflowDispatch({
                         owner: context.repo.owner,
                         repo: context.repo.repo,
                         workflow_id,
-                        ref,
+                        ref: targetSha,
                       });
+
+                      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                      const deadlineMs = dispatchStartedAtMs + (170 * 60 * 1000);
+
+                      // Find the workflow run that was created by the dispatch.
+                      // Note: createWorkflowDispatch does not return the run_id, so we discover it by:
+                      // - workflow file name (workflow_id)
+                      // - event=workflow_dispatch
+                      // - head_sha matches this workflow's sha
+                      // - created_at after we dispatched (with small slack)
+                      let run = null;
+                      while (!run && Date.now() < deadlineMs) {
+                        const runs = await github.rest.actions.listWorkflowRuns({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          workflow_id,
+                          event: "workflow_dispatch",
+                          per_page: 20,
+                        });
+
+                        const candidates = (runs.data.workflow_runs || [])
+                          .filter((r) => r && r.head_sha === targetSha)
+                          .filter((r) => new Date(r.created_at).getTime() >= (dispatchStartedAtMs - 60_000))
+                          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+                        run = candidates[0] || null;
+                        if (!run) {
+                          core.info(`Waiting for ${workflow_id} run to appear...`);
+                          await sleep(5000);
+                        }
+                      }
+
+                      if (!run) {
+                        core.setFailed(`Timed out discovering run for ${workflow_id} (ref=${ref}, targetSha=${targetSha}).`);
+                        return;
+                      }
+
+                      core.info(`Discovered run id=${run.id} url=${run.html_url}`);
+
+                      // Wait for it to complete and fail this matrix entry if it failed/cancelled.
+                      while (Date.now() < deadlineMs) {
+                        const runRes = await github.rest.actions.getWorkflowRun({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          run_id: run.id,
+                        });
+
+                        const status = runRes.data.status;
+                        const conclusion = runRes.data.conclusion;
+                        core.info(`Run ${run.id}: status=${status} conclusion=${conclusion}`);
+
+                        if (status === "completed") {
+                          if (conclusion !== "success") {
+                            core.setFailed(`Dispatched workflow ${workflow_id} did not succeed (conclusion=${conclusion}).`);
+                          }
+                          return;
+                        }
+
+                        await sleep(15000);
+                      }
+
+                      core.setFailed(`Timed out waiting for ${workflow_id} run id=${run.id} to complete.`);

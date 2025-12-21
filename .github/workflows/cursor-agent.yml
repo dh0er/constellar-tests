@@ -4,7 +4,7 @@ on:
     workflow_run:
         # These names must match the `name:` field in the workflows you want to
         # react to (not the filename).
-        workflows: [Android, iOS, Linux, macOS, Windows, Web]
+        workflows: [Run All Tests]
         types: [completed]
 
 permissions:
