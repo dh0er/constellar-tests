@@ -31,7 +31,7 @@ permissions:
 jobs:
     dispatch:
         name: Dispatch all test workflows
-        runs-on: ubuntu-slim
+        runs-on: ubuntu-latest
         timeout-minutes: 60
         strategy:
             fail-fast: false
