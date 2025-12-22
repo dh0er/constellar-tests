@@ -58,7 +58,9 @@ jobs:
                       const sourcePrInput = "${{ inputs.source_pr }}".trim();
 
                       const dispatchStartedAtMs = Date.now();
-                      const tokenUser = (await github.rest.users.getAuthenticated()).data.login;
+                      // Don't call `users.getAuthenticated()` here: `GITHUB_TOKEN` (integration token)
+                      // cannot access GET /user and will fail with "Resource not accessible by integration".
+                      const tokenUser = process.env.GITHUB_ACTOR;
 
                       core.info(`Dispatching ${workflow_id} on ref=${ref} (actor=${tokenUser})`);
 
@@ -102,10 +104,10 @@ jobs:
                           .filter((r) => (r.head_branch ?? "") === ref)
                           .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-                        // Prefer matching actor when available (dispatch via GITHUB_TOKEN typically shows github-actions[bot]).
+                        // Prefer matching actor when available.
                         run = candidates.find((r) => {
                           const actor = r.triggering_actor?.login ?? r.actor?.login;
-                          return !actor || actor === tokenUser;
+                          return !tokenUser || !actor || actor === tokenUser;
                         }) || candidates[0] || null;
 
                         if (!run) {
