@@ -7,6 +7,22 @@ on:
                 description: "Branch or tag to run on (default: current ref)"
                 required: false
                 default: ""
+            source_repo:
+                description: "Source repo that triggered this workflow (e.g. dh0er/astrologs)"
+                required: false
+                default: ""
+            source_ref:
+                description: "Git ref in the source repo to test (e.g. refs/pull/123/merge or refs/heads/main)"
+                required: false
+                default: ""
+            source_sha:
+                description: "Commit SHA in the source repo to test (optional)"
+                required: false
+                default: ""
+            source_pr:
+                description: "PR number in the source repo (optional)"
+                required: false
+                default: ""
 
 permissions:
     contents: read
@@ -36,6 +52,10 @@ jobs:
                       const workflow_id = "${{ matrix.workflow_file }}";
                       const refInput = "${{ inputs.ref }}".trim();
                       const ref = refInput || context.ref.replace(/^refs\/(heads|tags)\//, "");
+                      const sourceRepoInput = "${{ inputs.source_repo }}".trim();
+                      const sourceRefInput = "${{ inputs.source_ref }}".trim();
+                      const sourceShaInput = "${{ inputs.source_sha }}".trim();
+                      const sourcePrInput = "${{ inputs.source_pr }}".trim();
 
                       const dispatchStartedAtMs = Date.now();
                       // Resolve the requested ref to an immutable commit SHA so:
@@ -58,6 +78,12 @@ jobs:
                         repo: context.repo.repo,
                         workflow_id,
                         ref: targetSha,
+                        inputs: {
+                          ...(sourceRepoInput ? { source_repo: sourceRepoInput } : {}),
+                          ...(sourceRefInput ? { source_ref: sourceRefInput } : {}),
+                          ...(sourceShaInput ? { source_sha: sourceShaInput } : {}),
+                          ...(sourcePrInput ? { source_pr: sourcePrInput } : {}),
+                        },
                       });
 
                       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
