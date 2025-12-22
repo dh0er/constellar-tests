@@ -32,7 +32,7 @@ jobs:
     dispatch:
         name: Dispatch all test workflows
         runs-on: ubuntu-slim
-        timeout-minutes: 180
+        timeout-minutes: 60
         strategy:
             fail-fast: false
             matrix:
