@@ -58,26 +58,16 @@ jobs:
                       const sourcePrInput = "${{ inputs.source_pr }}".trim();
 
                       const dispatchStartedAtMs = Date.now();
-                      // Resolve the requested ref to an immutable commit SHA so:
-                      // - all dispatched workflows run the exact same commit
-                      // - we can reliably discover the created workflow run via head_sha
-                      let targetSha = context.sha;
-                      if (refInput) {
-                        const commit = await github.rest.repos.getCommit({
-                          owner: context.repo.owner,
-                          repo: context.repo.repo,
-                          ref: refInput,
-                        });
-                        targetSha = commit.data.sha;
-                      }
+                      const tokenUser = (await github.rest.users.getAuthenticated()).data.login;
 
-                      core.info(`Dispatching ${workflow_id} on ref=${ref} (targetSha=${targetSha})`);
+                      core.info(`Dispatching ${workflow_id} on ref=${ref} (actor=${tokenUser})`);
 
                       await github.rest.actions.createWorkflowDispatch({
                         owner: context.repo.owner,
                         repo: context.repo.repo,
                         workflow_id,
-                        ref: targetSha,
+                        // IMPORTANT: `ref` must be a branch or tag, not a commit SHA.
+                        ref,
                         inputs: {
                           ...(sourceRepoInput ? { source_repo: sourceRepoInput } : {}),
                           ...(sourceRefInput ? { source_ref: sourceRefInput } : {}),
@@ -88,13 +78,15 @@ jobs:
 
                       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
                       const deadlineMs = dispatchStartedAtMs + (170 * 60 * 1000);
+                      const createdAfter = new Date(dispatchStartedAtMs - 60_000);
 
                       // Find the workflow run that was created by the dispatch.
                       // Note: createWorkflowDispatch does not return the run_id, so we discover it by:
                       // - workflow file name (workflow_id)
                       // - event=workflow_dispatch
-                      // - head_sha matches this workflow's sha
+                      // - head_branch matches ref
                       // - created_at after we dispatched (with small slack)
+                      // - triggering_actor/actor matches the token user
                       let run = null;
                       while (!run && Date.now() < deadlineMs) {
                         const runs = await github.rest.actions.listWorkflowRuns({
@@ -102,15 +94,20 @@ jobs:
                           repo: context.repo.repo,
                           workflow_id,
                           event: "workflow_dispatch",
-                          per_page: 20,
+                          per_page: 50,
                         });
 
                         const candidates = (runs.data.workflow_runs || [])
-                          .filter((r) => r && r.head_sha === targetSha)
-                          .filter((r) => new Date(r.created_at).getTime() >= (dispatchStartedAtMs - 60_000))
+                          .filter((r) => r && new Date(r.created_at) >= createdAfter)
+                          .filter((r) => (r.head_branch ?? "") === ref)
                           .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-                        run = candidates[0] || null;
+                        // Prefer matching actor when available (dispatch via GITHUB_TOKEN typically shows github-actions[bot]).
+                        run = candidates.find((r) => {
+                          const actor = r.triggering_actor?.login ?? r.actor?.login;
+                          return !actor || actor === tokenUser;
+                        }) || candidates[0] || null;
+
                         if (!run) {
                           core.info(`Waiting for ${workflow_id} run to appear...`);
                           await sleep(5000);
@@ -118,7 +115,7 @@ jobs:
                       }
 
                       if (!run) {
-                        core.setFailed(`Timed out discovering run for ${workflow_id} (ref=${ref}, targetSha=${targetSha}).`);
+                        core.setFailed(`Timed out discovering run for ${workflow_id} (ref=${ref}).`);
                         return;
                       }
 
