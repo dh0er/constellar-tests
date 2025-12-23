@@ -280,6 +280,68 @@ jobs:
                     "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/logs" \
                     -o "${zip_path}"
 
+            - name: Download downstream run artifacts (zip files)
+              if: >-
+                  ${{
+                    always() &&
+                    steps.dispatch_and_wait.outputs.run_id != '' &&
+                    steps.dispatch_and_wait.outputs.conclusion != 'success'
+                  }}
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  RUN_ID: ${{ steps.dispatch_and_wait.outputs.run_id }}
+              run: |
+                  set -euo pipefail
+                  out_dir="downstream-artifacts/${{ matrix.workflow_file }}-run-${RUN_ID}"
+                  mkdir -p "${out_dir}"
+
+                  artifacts_json="$(curl -sSfL \
+                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                    -H "Accept: application/vnd.github+json" \
+                    "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts")"
+
+                  echo "$artifacts_json" | python3 - <<'PY' > "${out_dir}/_artifact_index.txt"
+                  import json,sys,os,re
+                  data=json.load(sys.stdin)
+                  arts=data.get("artifacts",[]) or []
+                  for a in arts:
+                      name=a.get("name") or "artifact"
+                      art_id=a.get("id")
+                      if not art_id:
+                          continue
+                      safe=re.sub(r'[^A-Za-z0-9._-]+','_',name)
+                      print(f"{art_id}\t{safe}\t{name}")
+                  PY
+
+                  if [[ ! -s "${out_dir}/_artifact_index.txt" ]]; then
+                    echo "No downstream artifacts to download for run ${RUN_ID}."
+                    exit 0
+                  fi
+
+                  echo "Downloading downstream artifacts listed in ${out_dir}/_artifact_index.txt"
+                  while IFS=$'\t' read -r art_id safe_name orig_name; do
+                    zip_path="${out_dir}/${safe_name}.zip"
+                    echo "Downloading artifact id=${art_id} name=${orig_name} -> ${zip_path}"
+                    curl -sSfL \
+                      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                      -H "Accept: application/vnd.github+json" \
+                      "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${art_id}/zip" \
+                      -o "${zip_path}"
+                  done < "${out_dir}/_artifact_index.txt"
+
+            - name: Upload downstream artifacts bundle
+              if: >-
+                  ${{
+                    always() &&
+                    steps.dispatch_and_wait.outputs.run_id != '' &&
+                    steps.dispatch_and_wait.outputs.conclusion != 'success'
+                  }}
+              uses: actions/upload-artifact@v4
+              with:
+                  name: downstream-artifacts-${{ matrix.workflow_file }}-run-${{ steps.dispatch_and_wait.outputs.run_id }}
+                  path: downstream-artifacts/${{ matrix.workflow_file }}-run-${{ steps.dispatch_and_wait.outputs.run_id }}
+                  if-no-files-found: ignore
+
             - name: Upload downstream logs artifact
               if: >-
                   ${{

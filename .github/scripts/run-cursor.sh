@@ -230,7 +230,7 @@ There may also be a SOURCE_REPOSITORY that originally triggered the tests run (e
 
 # Goal:
 - Implement an end-to-end CI fix flow for a failed workflow run.
-  - If the run is associated with a PR (either PR_NUMBER from SOURCE_REPOSITORY context or RUN_REPOSITORY linkage): create/update a persistent fix branch and comment on the PR with a quick-create compare link (do NOT create a PR directly).
+  - If the run is associated with a PR (either PR_NUMBER from SOURCE_REPOSITORY context or RUN_REPOSITORY linkage): fix the PR with minimal changes, preferring to push fixes directly to the PR head branch when safe (details below).
   - If the run is NOT associated with a PR: create a fix branch off the default branch and open a PR back into the default branch.
 
 # Requirements:
@@ -240,9 +240,20 @@ There may also be a SOURCE_REPOSITORY that originally triggered the tests run (e
    - Else, treat it as not PR-associated.
 2) If tied to a PR:
    - Determine the PR base and head branches. Let HEAD_REF be the PR's head branch.
-   - Maintain a persistent fix branch for this HEAD_REF using the Fix Branch Prefix from Context. Create it if missing, update it otherwise, and push changes to origin.
+   - Decide where to push fixes:
+     - First, fetch PR metadata from PR_REPOSITORY (via `gh api repos/$PR_REPOSITORY/pulls/$PR_NUMBER`) and determine:
+       - PR_HEAD_REPO = `.head.repo.full_name`
+       - HEAD_REF = `.head.ref`
+       - IS_FORK = `.head.repo.fork`
+     - If HEAD_REF already starts with the Fix Branch Prefix (e.g. `ci-fix/...`), PR_HEAD_REPO equals TARGET_REPOSITORY, and IS_FORK is false, then treat HEAD_REF as the fix branch and push commits directly to it so the PR updates immediately. Do NOT create a second branch like `ci-fix/ci-fix-...` in this case.
+     - Otherwise, maintain a persistent fix branch for this HEAD_REF using the Fix Branch Prefix from Context (e.g. `${BRANCH_PREFIX}/${HEAD_REF}`), create it if missing, update it otherwise, and push changes to origin.
    - Attempt to resolve the CI failure with minimal, targeted edits consistent with the repo's style.
-   - Do NOT create a PR. Instead, post or update a single natural-language PR comment (1–2 sentences) that briefly explains the fix and includes an inline compare link to quick-create a PR.
+   - If you pushed directly to HEAD_REF: post or update a single natural-language PR comment (1–2 sentences) that briefly explains the fix and notes that the PR branch was updated.
+   - If you used a separate persistent fix branch: do NOT create a PR. Instead, post or update a single natural-language PR comment (1–2 sentences) that briefly explains the fix and includes an inline compare link to quick-create a PR.
+   - Verification (required): after pushing and commenting, verify (via GitHub API) that:
+     - the remote branch tip SHA is the expected commit SHA
+     - the PR comment exists/was updated
+     If any of these fail, do not claim success.
 3) If NOT tied to a PR:
    - Treat the TARGET default branch as the failing base. Create a fix branch from the TARGET default branch using the Fix Branch Prefix and the run id for uniqueness.
    - Attempt to resolve the CI failure with minimal, targeted edits consistent with the repo's style.
@@ -270,11 +281,23 @@ There may also be a SOURCE_REPOSITORY that originally triggered the tests run (e
   - `downstream-logs-tests-ios.yml-run-<id>.zip`
   - `downstream-logs-tests-web.yml-run-<id>.zip`
   - `downstream-logs-tests-android.yml-run-<id>.zip`
+- It may also have uploaded downstream run artifacts captured by platform workflows (screenshots, videos, etc.) like:
+  - `downstream-artifacts-tests-web.yml-run-<id>/.../*.zip`
+  - `downstream-artifacts-tests-android.yml-run-<id>/.../*.zip`
 - These artifacts (if any) have already been downloaded into `__RUN_ARTIFACTS_DIR_VALUE__`.
-- Prefer inspecting those ZIPs to avoid truncated combined logs. They contain the full job logs for each downstream run.
+- Prefer inspecting those ZIPs/artifact bundles to avoid truncated combined logs.
+
+# Multi-failure handling (critical):
+- This run can have multiple failing downstream workflows (e.g. web AND android). You MUST handle ALL of them:
+  - Enumerate all failing downstream workflows by inspecting the downloaded artifacts directory for `downstream-logs-*.zip` and `downstream-artifacts-*`.
+  - For each failing workflow, inspect logs AND any attached artifacts (screenshots/recordings) before deciding what to change.
+  - If a failure is infra/non-actionable (e.g. adb daemon not reachable), explicitly classify it, and propose safe mitigations if appropriate. Do not ignore it.
+  - Do not stop after fixing the first failure unless you have verified no other workflows failed.
 
 # Deliverables when updates occur:
-- If PR-associated: pushed commits to the persistent fix branch for the PR head, and a single PR comment with a quick-create compare link.
+- If PR-associated:
+  - If HEAD_REF starts with the fix prefix and is not a fork: pushed commits directly to HEAD_REF and posted/updated a single PR comment.
+  - Otherwise: pushed commits to the persistent fix branch for the PR head, and posted/updated a single PR comment with a quick-create compare link.
 - If not PR-associated: a PR opened from the fix branch into the default branch.
 EOF
 )"
