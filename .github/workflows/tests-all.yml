@@ -7,6 +7,22 @@ on:
                 description: "Branch or tag to run on (default: current ref)"
                 required: false
                 default: ""
+            source_repo:
+                description: "Source repo that triggered this workflow (e.g. dh0er/astrologs)"
+                required: false
+                default: ""
+            source_ref:
+                description: "Git ref in the source repo to test (e.g. refs/pull/123/merge or refs/heads/main)"
+                required: false
+                default: ""
+            source_sha:
+                description: "Commit SHA in the source repo to test (optional)"
+                required: false
+                default: ""
+            source_pr:
+                description: "PR number in the source repo (optional)"
+                required: false
+                default: ""
 
 permissions:
     contents: read
@@ -15,8 +31,8 @@ permissions:
 jobs:
     dispatch:
         name: Dispatch all test workflows
-        runs-on: ubuntu-slim
-        timeout-minutes: 180
+        runs-on: ubuntu-latest
+        timeout-minutes: 60
         strategy:
             fail-fast: false
             matrix:
@@ -37,6 +53,10 @@ jobs:
                       const workflow_id = "${{ matrix.workflow_file }}";
                       const refInput = "${{ inputs.ref }}".trim();
                       const ref = refInput || context.ref.replace(/^refs\/(heads|tags)\//, "");
+                      const sourceRepoInput = "${{ inputs.source_repo }}".trim();
+                      const sourceRefInput = "${{ inputs.source_ref }}".trim();
+                      const sourceShaInput = "${{ inputs.source_sha }}".trim();
+                      const sourcePrInput = "${{ inputs.source_pr }}".trim();
 
                       const dispatchStartedAtMs = Date.now();
                       // Resolve the requested ref to an immutable commit SHA so:
@@ -52,24 +72,51 @@ jobs:
                         targetSha = commit.data.sha;
                       }
 
-                      core.info(`Dispatching ${workflow_id} on ref=${ref} (targetSha=${targetSha})`);
+                      // Don't call `users.getAuthenticated()` here: `GITHUB_TOKEN` (integration token)
+                      // cannot access GET /user and will fail with "Resource not accessible by integration".
+                      const tokenUser = process.env.GITHUB_ACTOR;
 
-                      await github.rest.actions.createWorkflowDispatch({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        workflow_id,
-                        ref: targetSha,
-                      });
+                      core.info(`Dispatching ${workflow_id} on ref=${ref} (targetSha=${targetSha}, actor=${tokenUser})`);
+
+                      const dispatchInputs = {
+                        ...(sourceRepoInput ? { source_repo: sourceRepoInput } : {}),
+                        ...(sourceRefInput ? { source_ref: sourceRefInput } : {}),
+                        ...(sourceShaInput ? { source_sha: sourceShaInput } : {}),
+                        ...(sourcePrInput ? { source_pr: sourcePrInput } : {}),
+                      };
+
+                      // Try to pin the dispatched workflow run to an immutable SHA. If GitHub rejects
+                      // the SHA for `ref`, fall back to the branch/tag `ref`.
+                      try {
+                        await github.rest.actions.createWorkflowDispatch({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          workflow_id,
+                          ref: targetSha,
+                          inputs: dispatchInputs,
+                        });
+                      } catch (e) {
+                        core.warning(`Dispatch with ref=SHA failed for ${workflow_id}; falling back to ref=${ref}. Error: ${e?.message ?? e}`);
+                        await github.rest.actions.createWorkflowDispatch({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          workflow_id,
+                          ref,
+                          inputs: dispatchInputs,
+                        });
+                      }
 
                       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
                       const deadlineMs = dispatchStartedAtMs + (170 * 60 * 1000);
+                      const createdAfter = new Date(dispatchStartedAtMs - 60_000);
 
                       // Find the workflow run that was created by the dispatch.
                       // Note: createWorkflowDispatch does not return the run_id, so we discover it by:
                       // - workflow file name (workflow_id)
                       // - event=workflow_dispatch
-                      // - head_sha matches this workflow's sha
+                      // - head_sha matches the resolved targetSha (preferred) / head_branch matches ref (fallback)
                       // - created_at after we dispatched (with small slack)
+                      // - triggering_actor/actor matches the token user
                       let run = null;
                       while (!run && Date.now() < deadlineMs) {
                         const runs = await github.rest.actions.listWorkflowRuns({
@@ -77,15 +124,23 @@ jobs:
                           repo: context.repo.repo,
                           workflow_id,
                           event: "workflow_dispatch",
-                          per_page: 20,
+                          per_page: 50,
                         });
 
-                        const candidates = (runs.data.workflow_runs || [])
-                          .filter((r) => r && r.head_sha === targetSha)
-                          .filter((r) => new Date(r.created_at).getTime() >= (dispatchStartedAtMs - 60_000))
+                        const all = (runs.data.workflow_runs || [])
+                          .filter((r) => r && new Date(r.created_at) >= createdAfter)
                           .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-                        run = candidates[0] || null;
+                        const shaCandidates = all.filter((r) => (r.head_sha ?? "") === targetSha);
+                        const branchCandidates = all.filter((r) => (r.head_branch ?? "") === ref);
+                        const candidates = (shaCandidates.length > 0 ? shaCandidates : branchCandidates);
+
+                        // Prefer matching actor when available.
+                        run = candidates.find((r) => {
+                          const actor = r.triggering_actor?.login ?? r.actor?.login;
+                          return !tokenUser || !actor || actor === tokenUser;
+                        }) || candidates[0] || null;
+
                         if (!run) {
                           core.info(`Waiting for ${workflow_id} run to appear...`);
                           await sleep(5000);
