@@ -81,6 +81,19 @@ if [[ -n "${GH_RUN_ID:-}" ]]; then
     PR_NUMBER=$(gh api "repos/$RUN_OWNER/$RUN_REPO/actions/runs/$GH_RUN_ID" --jq '.pull_requests[0].number // ""')
 fi
 
+# Download workflow artifacts for this run (if available). This is especially useful
+# for "Run All Tests" which may attach full downstream logs as artifacts.
+RUN_ARTIFACTS_DIR="${RUN_ARTIFACTS_DIR:-}"
+if [[ -z "${RUN_ARTIFACTS_DIR}" ]] && [[ -n "${GH_RUN_ID:-}" ]]; then
+    RUN_ARTIFACTS_DIR="${RUNNER_TEMP:-/tmp}/run-artifacts-${RUN_OWNER}-${RUN_REPO}-${GH_RUN_ID}"
+fi
+
+if [[ -n "${GH_RUN_ID:-}" ]] && [[ -n "${RUN_ARTIFACTS_DIR:-}" ]]; then
+    mkdir -p "${RUN_ARTIFACTS_DIR}" || true
+    # Don't fail the whole agent run if artifacts can't be fetched (e.g. permissions).
+    gh run download "${GH_RUN_ID}" --repo "${RUN_OWNER}/${RUN_REPO}" --dir "${RUN_ARTIFACTS_DIR}" >/dev/null 2>&1 || true
+fi
+
 # Ensure we run the agent *inside* the target repository checkout.
 if [[ -n "${TARGET_WORKDIR}" ]]; then
     cd "${TARGET_WORKDIR}"
@@ -158,6 +171,7 @@ IMPORTANT: There are TWO repositories involved:
 - Workflow Run ID (RUN_REPOSITORY): __GH_RUN_ID_VALUE__
 - Workflow Run URL (RUN_REPOSITORY): __GH_RUN_URL_VALUE__
 - Associated PR Number (RUN_REPOSITORY, may be empty): __PR_NUMBER_VALUE__
+- Downloaded workflow artifacts dir (RUN_REPOSITORY, may be empty): __RUN_ARTIFACTS_DIR_VALUE__
 
 - TARGET_REPOSITORY: __TARGET_REPOSITORY_VALUE__
 - Target owner: __TARGET_OWNER_VALUE__
@@ -197,6 +211,14 @@ IMPORTANT: There are TWO repositories involved:
 - When pushing commits / creating PRs, operate on TARGET_REPOSITORY (your current working directory is the target repo checkout).
 - Avoid duplicate comments; if a previous bot comment exists, update it instead of posting a new one.
 
+# Full logs for downstream "dispatch" workflows (if present):
+- If the failing run is a dispatcher (e.g. "Run All Tests"), it may have uploaded artifacts like:
+  - `downstream-logs-tests-ios.yml-run-<id>.zip`
+  - `downstream-logs-tests-web.yml-run-<id>.zip`
+  - `downstream-logs-tests-android.yml-run-<id>.zip`
+- These artifacts (if any) have already been downloaded into `__RUN_ARTIFACTS_DIR_VALUE__`.
+- Prefer inspecting those ZIPs to avoid truncated combined logs. They contain the full job logs for each downstream run.
+
 # Deliverables when updates occur:
 - If PR-associated: pushed commits to the persistent fix branch for the PR head, and a single PR comment with a quick-create compare link.
 - If not PR-associated: a PR opened from the fix branch into the default branch.
@@ -207,6 +229,7 @@ PROMPT="${PROMPT//__RUN_REPOSITORY_VALUE__/${RUN_REPOSITORY}}"
 PROMPT="${PROMPT//__GH_RUN_ID_VALUE__/${GH_RUN_ID:-}}"
 PROMPT="${PROMPT//__GH_RUN_URL_VALUE__/${GH_RUN_URL:-}}"
 PROMPT="${PROMPT//__PR_NUMBER_VALUE__/${PR_NUMBER:-}}"
+PROMPT="${PROMPT//__RUN_ARTIFACTS_DIR_VALUE__/${RUN_ARTIFACTS_DIR:-}}"
 PROMPT="${PROMPT//__TARGET_REPOSITORY_VALUE__/${TARGET_REPOSITORY}}"
 PROMPT="${PROMPT//__TARGET_OWNER_VALUE__/${TARGET_OWNER}}"
 PROMPT="${PROMPT//__TARGET_REPO_VALUE__/${TARGET_REPO}}"
