@@ -29,10 +29,62 @@ permissions:
     actions: write
 
 jobs:
+    record-context:
+        name: Record cursor-agent context
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        steps:
+            - name: Record source context (for cursor-agent)
+              id: record_source_context
+              shell: bash
+              run: |
+                  set -euo pipefail
+
+                  source_repo="${{ inputs.source_repo }}"
+                  source_ref="${{ inputs.source_ref }}"
+                  source_sha="${{ inputs.source_sha }}"
+                  source_pr="${{ inputs.source_pr }}"
+
+                  # Derive PR number from a refs/pull/<n>/... ref when not explicitly provided.
+                  if [[ -z "${source_pr}" ]] && [[ "${source_ref}" =~ ^refs/pull/([0-9]+)/ ]]; then
+                    source_pr="${BASH_REMATCH[1]}"
+                  fi
+
+                  mkdir -p cursor-agent-context
+                  cat > cursor-agent-context/source_context.json <<EOF
+                  {
+                    "source_repo": "${source_repo}",
+                    "source_ref": "${source_ref}",
+                    "source_sha": "${source_sha}",
+                    "source_pr": "${source_pr}",
+                    "tests_repo": "${{ github.repository }}",
+                    "tests_run_id": "${{ github.run_id }}",
+                    "tests_run_attempt": "${{ github.run_attempt }}",
+                    "tests_run_number": "${{ github.run_number }}",
+                    "tests_workflow": "${{ github.workflow }}",
+                    "tests_ref": "${{ github.ref }}",
+                    "tests_sha": "${{ github.sha }}",
+                    "actor": "${{ github.actor }}",
+                    "event_name": "${{ github.event_name }}"
+                  }
+                  EOF
+
+                  echo "Wrote cursor-agent source context:"
+                  cat cursor-agent-context/source_context.json
+
+            - name: Upload source context artifact (for cursor-agent)
+              if: ${{ always() }}
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cursor-agent-context
+                  path: cursor-agent-context/source_context.json
+                  if-no-files-found: error
+
     dispatch:
         name: Dispatch all test workflows
         runs-on: ubuntu-latest
         timeout-minutes: 60
+        needs: record-context
         strategy:
             fail-fast: false
             matrix:
@@ -56,7 +108,12 @@ jobs:
                       const sourceRepoInput = "${{ inputs.source_repo }}".trim();
                       const sourceRefInput = "${{ inputs.source_ref }}".trim();
                       const sourceShaInput = "${{ inputs.source_sha }}".trim();
-                      const sourcePrInput = "${{ inputs.source_pr }}".trim();
+                      let sourcePrInput = "${{ inputs.source_pr }}".trim();
+
+                      // Derive PR number from a refs/pull/<n>/... ref when not explicitly provided.
+                      if (!sourcePrInput && /^refs\/pull\/(\d+)\//.test(sourceRefInput)) {
+                        sourcePrInput = sourceRefInput.match(/^refs\/pull\/(\d+)\//)[1];
+                      }
 
                       const dispatchStartedAtMs = Date.now();
                       // Resolve the requested ref to an immutable commit SHA so:

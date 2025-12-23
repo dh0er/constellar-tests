@@ -75,10 +75,10 @@ if [[ -n "${GH_RUN_ID:-}" ]] && [[ -z "${GH_RUN_URL:-}" ]]; then
     GH_RUN_URL=$(gh api "repos/$RUN_OWNER/$RUN_REPO/actions/runs/$GH_RUN_ID" --jq '.html_url // ""')
 fi
 
-# Determine if this run is associated with a PR (can be empty for push-to-main runs).
-PR_NUMBER=""
+# Determine if this run is associated with a PR in the RUN_REPOSITORY (often empty for workflow_dispatch).
+RUN_PR_NUMBER=""
 if [[ -n "${GH_RUN_ID:-}" ]]; then
-    PR_NUMBER=$(gh api "repos/$RUN_OWNER/$RUN_REPO/actions/runs/$GH_RUN_ID" --jq '.pull_requests[0].number // ""')
+    RUN_PR_NUMBER=$(gh api "repos/$RUN_OWNER/$RUN_REPO/actions/runs/$GH_RUN_ID" --jq '.pull_requests[0].number // ""')
 fi
 
 # Download workflow artifacts for this run (if available). This is especially useful
@@ -93,6 +93,46 @@ if [[ -n "${GH_RUN_ID:-}" ]] && [[ -n "${RUN_ARTIFACTS_DIR:-}" ]]; then
     # Don't fail the whole agent run if artifacts can't be fetched (e.g. permissions).
     gh run download "${GH_RUN_ID}" --repo "${RUN_OWNER}/${RUN_REPO}" --dir "${RUN_ARTIFACTS_DIR}" >/dev/null 2>&1 || true
 fi
+
+# Optional: Extract source repo context that was recorded by the "Run All Tests" workflow.
+# This is critical when a PR in a *different* repo (e.g. source/target) triggered this run,
+# because workflow_run payloads in this repo won't include PR linkage.
+SOURCE_REPOSITORY=""
+SOURCE_REF=""
+SOURCE_SHA=""
+SOURCE_PR_NUMBER=""
+SOURCE_CONTEXT_PATH=""
+if [[ -n "${RUN_ARTIFACTS_DIR:-}" ]] && [[ -d "${RUN_ARTIFACTS_DIR:-}" ]]; then
+    SOURCE_CONTEXT_PATH="$(
+        find "${RUN_ARTIFACTS_DIR}" -maxdepth 4 -type f -name "source_context.json" 2>/dev/null \
+            | head -n 1 \
+            || true
+    )"
+fi
+
+if [[ -n "${SOURCE_CONTEXT_PATH:-}" ]] && [[ -f "${SOURCE_CONTEXT_PATH:-}" ]]; then
+    # Prefer jq; fall back to python if jq isn't available.
+    if command -v jq >/dev/null 2>&1; then
+        SOURCE_REPOSITORY="$(jq -r '.source_repo // ""' "${SOURCE_CONTEXT_PATH}" 2>/dev/null || true)"
+        SOURCE_REF="$(jq -r '.source_ref // ""' "${SOURCE_CONTEXT_PATH}" 2>/dev/null || true)"
+        SOURCE_SHA="$(jq -r '.source_sha // ""' "${SOURCE_CONTEXT_PATH}" 2>/dev/null || true)"
+        SOURCE_PR_NUMBER="$(jq -r '.source_pr // ""' "${SOURCE_CONTEXT_PATH}" 2>/dev/null || true)"
+    elif command -v python3 >/dev/null 2>&1; then
+        SOURCE_REPOSITORY="$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])) or {}).get("source_repo",""))' "${SOURCE_CONTEXT_PATH}" 2>/dev/null || true)"
+        SOURCE_REF="$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])) or {}).get("source_ref",""))' "${SOURCE_CONTEXT_PATH}" 2>/dev/null || true)"
+        SOURCE_SHA="$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])) or {}).get("source_sha",""))' "${SOURCE_CONTEXT_PATH}" 2>/dev/null || true)"
+        SOURCE_PR_NUMBER="$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])) or {}).get("source_pr",""))' "${SOURCE_CONTEXT_PATH}" 2>/dev/null || true)"
+    fi
+fi
+
+# Prefer a PR association from source context when available (common for cross-repo dispatch).
+PR_NUMBER="${SOURCE_PR_NUMBER:-}"
+if [[ -z "${PR_NUMBER:-}" ]]; then
+    PR_NUMBER="${RUN_PR_NUMBER:-}"
+fi
+
+# If source repository isn't provided, assume PR (if any) lives in the target repo.
+PR_REPOSITORY="$(normalize_repo_slug "${SOURCE_REPOSITORY:-${TARGET_REPOSITORY}}")"
 
 # Ensure we run the agent *inside* the target repository checkout.
 if [[ -n "${TARGET_WORKDIR}" ]]; then
@@ -162,6 +202,8 @@ IMPORTANT: There are TWO repositories involved:
 1) RUN_REPOSITORY: where this GitHub Actions workflow_run happened (where GH_RUN_ID/GH_RUN_URL point).
 2) TARGET_REPOSITORY: the repository whose code you must change. You are currently running with your working directory set to the TARGET repo checkout. Do NOT modify files outside the target repo checkout.
 
+There may also be a SOURCE_REPOSITORY that originally triggered the tests run (e.g. a different repo dispatching into RUN_REPOSITORY). If SOURCE_REPOSITORY + SOURCE_PR_NUMBER are present, treat that as the authoritative "PR association".
+
 # Auth
 - `GH_TOKEN` is set for GitHub API/PR actions.
 - If `TARGET_GH_TOKEN` is set, the script has already configured the target repo's `origin` remote to use HTTPS token auth (to avoid "deploy key is read-only" push failures).
@@ -170,7 +212,7 @@ IMPORTANT: There are TWO repositories involved:
 - RUN_REPOSITORY: __RUN_REPOSITORY_VALUE__
 - Workflow Run ID (RUN_REPOSITORY): __GH_RUN_ID_VALUE__
 - Workflow Run URL (RUN_REPOSITORY): __GH_RUN_URL_VALUE__
-- Associated PR Number (RUN_REPOSITORY, may be empty): __PR_NUMBER_VALUE__
+- Associated PR Number (RUN_REPOSITORY, may be empty): __RUN_PR_NUMBER_VALUE__
 - Downloaded workflow artifacts dir (RUN_REPOSITORY, may be empty): __RUN_ARTIFACTS_DIR_VALUE__
 
 - TARGET_REPOSITORY: __TARGET_REPOSITORY_VALUE__
@@ -179,13 +221,23 @@ IMPORTANT: There are TWO repositories involved:
 - Target default branch: __TARGET_DEFAULT_BRANCH_VALUE__
 - Fix Branch Prefix: __BRANCH_PREFIX_VALUE__
 
+- SOURCE_REPOSITORY (may be empty): __SOURCE_REPOSITORY_VALUE__
+- Source ref (may be empty): __SOURCE_REF_VALUE__
+- Source sha (may be empty): __SOURCE_SHA_VALUE__
+- Source PR number (may be empty): __SOURCE_PR_NUMBER_VALUE__
+- PR repository to use for PR actions (PR_REPOSITORY): __PR_REPOSITORY_VALUE__
+- Effective PR number to use (PR_NUMBER, derived from source or run): __PR_NUMBER_VALUE__
+
 # Goal:
 - Implement an end-to-end CI fix flow for a failed workflow run.
-  - If the run is associated with a PR: create/update a persistent fix branch and comment on the PR with a quick-create compare link (do NOT create a PR directly).
+  - If the run is associated with a PR (either PR_NUMBER from SOURCE_REPOSITORY context or RUN_REPOSITORY linkage): create/update a persistent fix branch and comment on the PR with a quick-create compare link (do NOT create a PR directly).
   - If the run is NOT associated with a PR: create a fix branch off the default branch and open a PR back into the default branch.
 
 # Requirements:
-1) Inspect the failed workflow run and determine whether it is tied to a PR.
+1) Determine whether this failure is tied to a PR:
+   - If SOURCE_PR_NUMBER is non-empty, treat the failure as PR-associated in PR_REPOSITORY (this is expected for cross-repo dispatch).
+   - Else, if RUN_PR_NUMBER is non-empty, treat it as PR-associated in RUN_REPOSITORY.
+   - Else, treat it as not PR-associated.
 2) If tied to a PR:
    - Determine the PR base and head branches. Let HEAD_REF be the PR's head branch.
    - Maintain a persistent fix branch for this HEAD_REF using the Fix Branch Prefix from Context. Create it if missing, update it otherwise, and push changes to origin.
@@ -205,6 +257,8 @@ IMPORTANT: There are TWO repositories involved:
   - Run/workflow metadata MUST target RUN_REPOSITORY:
     - Prefer explicit REST endpoints like `gh api repos/$RUN_REPOSITORY/actions/runs/$GH_RUN_ID`
     - Or pass `--repo "$RUN_REPOSITORY"` (e.g. `gh run view "$GH_RUN_ID" --repo "$RUN_REPOSITORY"`)
+  - PR metadata / commenting MUST target PR_REPOSITORY:
+    - Use `--repo "$PR_REPOSITORY"` for `gh pr view`, `gh pr comment`, etc.
   - Target-repo PR creation MUST target TARGET_REPOSITORY:
     - Pass `--repo "$TARGET_REPOSITORY"` for `gh pr create`, `gh pr view`, etc.
 - Never run `gh pr create` without an explicit `--repo` flag.
@@ -228,13 +282,35 @@ EOF
 PROMPT="${PROMPT//__RUN_REPOSITORY_VALUE__/${RUN_REPOSITORY}}"
 PROMPT="${PROMPT//__GH_RUN_ID_VALUE__/${GH_RUN_ID:-}}"
 PROMPT="${PROMPT//__GH_RUN_URL_VALUE__/${GH_RUN_URL:-}}"
-PROMPT="${PROMPT//__PR_NUMBER_VALUE__/${PR_NUMBER:-}}"
+PROMPT="${PROMPT//__RUN_PR_NUMBER_VALUE__/${RUN_PR_NUMBER:-}}"
 PROMPT="${PROMPT//__RUN_ARTIFACTS_DIR_VALUE__/${RUN_ARTIFACTS_DIR:-}}"
 PROMPT="${PROMPT//__TARGET_REPOSITORY_VALUE__/${TARGET_REPOSITORY}}"
 PROMPT="${PROMPT//__TARGET_OWNER_VALUE__/${TARGET_OWNER}}"
 PROMPT="${PROMPT//__TARGET_REPO_VALUE__/${TARGET_REPO}}"
 PROMPT="${PROMPT//__TARGET_DEFAULT_BRANCH_VALUE__/${TARGET_DEFAULT_BRANCH}}"
 PROMPT="${PROMPT//__BRANCH_PREFIX_VALUE__/${BRANCH_PREFIX}}"
+PROMPT="${PROMPT//__SOURCE_REPOSITORY_VALUE__/${SOURCE_REPOSITORY:-}}"
+PROMPT="${PROMPT//__SOURCE_REF_VALUE__/${SOURCE_REF:-}}"
+PROMPT="${PROMPT//__SOURCE_SHA_VALUE__/${SOURCE_SHA:-}}"
+PROMPT="${PROMPT//__SOURCE_PR_NUMBER_VALUE__/${SOURCE_PR_NUMBER:-}}"
+PROMPT="${PROMPT//__PR_REPOSITORY_VALUE__/${PR_REPOSITORY:-}}"
+PROMPT="${PROMPT//__PR_NUMBER_VALUE__/${PR_NUMBER:-}}"
+
+echo "=== Cursor-agent context dump (pre-run) ==="
+echo "RUN_REPOSITORY=${RUN_REPOSITORY}  GH_RUN_ID=${GH_RUN_ID:-}  GH_RUN_URL=${GH_RUN_URL:-}"
+echo "RUN_PR_NUMBER=${RUN_PR_NUMBER:-}  SOURCE_PR_NUMBER=${SOURCE_PR_NUMBER:-}  EFFECTIVE_PR_NUMBER=${PR_NUMBER:-}"
+echo "TARGET_REPOSITORY=${TARGET_REPOSITORY}  TARGET_DEFAULT_BRANCH=${TARGET_DEFAULT_BRANCH}"
+echo "SOURCE_REPOSITORY=${SOURCE_REPOSITORY:-}  SOURCE_REF=${SOURCE_REF:-}  SOURCE_SHA=${SOURCE_SHA:-}"
+echo "PR_REPOSITORY=${PR_REPOSITORY:-}"
+if [[ -n "${SOURCE_CONTEXT_PATH:-}" ]] && [[ -f "${SOURCE_CONTEXT_PATH:-}" ]]; then
+    echo "SOURCE_CONTEXT_PATH=${SOURCE_CONTEXT_PATH}"
+    echo "--- source_context.json ---"
+    cat "${SOURCE_CONTEXT_PATH}" || true
+    echo "--------------------------"
+else
+    echo "SOURCE_CONTEXT_PATH=(not found)"
+fi
+echo "========================================="
 
 echo "cursor-agent path: $(command -v cursor-agent || echo 'not found')"
 echo "cursor-agent version:"

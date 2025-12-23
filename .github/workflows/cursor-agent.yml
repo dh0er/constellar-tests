@@ -24,6 +24,25 @@ jobs:
               with:
                   fetch-depth: 0
 
+            - name: Debug workflow_run context (what cursor-agent receives)
+              if: ${{ always() }}
+              run: |
+                  set -euo pipefail
+                  echo "=== workflow_run (tests repo) context ==="
+                  echo "repository=${{ github.repository }}"
+                  echo "workflow_run.id=${{ github.event.workflow_run.id }}"
+                  echo "workflow_run.name=${{ github.event.workflow_run.name }}"
+                  echo "workflow_run.event=${{ github.event.workflow_run.event }}"
+                  echo "workflow_run.status=${{ github.event.workflow_run.status }}"
+                  echo "workflow_run.conclusion=${{ github.event.workflow_run.conclusion }}"
+                  echo "workflow_run.head_branch=${{ github.event.workflow_run.head_branch }}"
+                  echo "workflow_run.head_sha=${{ github.event.workflow_run.head_sha }}"
+                  echo "workflow_run.html_url=${{ github.event.workflow_run.html_url }}"
+                  echo "workflow_run.pull_requests=${{ toJson(github.event.workflow_run.pull_requests) }}"
+                  echo "workflow_run.actor=${{ github.event.workflow_run.actor && github.event.workflow_run.actor.login || '' }}"
+                  echo "workflow_run.triggering_actor=${{ github.event.workflow_run.triggering_actor && github.event.workflow_run.triggering_actor.login || '' }}"
+                  echo "========================================"
+
             - name: Setup Flutter
               uses: subosito/flutter-action@v2
               with:
