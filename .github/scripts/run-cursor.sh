@@ -398,23 +398,30 @@ sleep_seconds="${CURSOR_AGENT_RETRY_SLEEP_SECONDS:-10}"
 while true; do
     echo "Running cursor-agent (attempt ${attempt}/${max_attempts})..."
     set +e
-    OUTPUT="$(CURSOR_AGENT_AUTOMATION=true cursor-agent -p "$PROMPT" --force --model "$MODEL" --output-format=text 2>&1)"
-    EXIT_CODE=$?
+    # Stream logs live (so GH Actions doesn't look "stuck") and avoid buffering the
+    # entire output in memory (which can truncate/kill long runs).
+    OUTPUT_FILE="$(mktemp -t cursor-agent-output.XXXXXX)"
+    CURSOR_AGENT_AUTOMATION=true cursor-agent -p "$PROMPT" --force --model "$MODEL" --output-format=text 2>&1 | tee "$OUTPUT_FILE"
+    # With `set -o pipefail`, the pipeline exit code may be from `tee`. We want
+    # cursor-agent's status (first command in pipeline).
+    EXIT_CODE="${PIPESTATUS[0]}"
+    echo "cursor-agent exit code: ${EXIT_CODE}"
     set -e
 
-    echo "$OUTPUT"
-
     if [[ $EXIT_CODE -eq 0 ]]; then
+        rm -f "$OUTPUT_FILE" || true
         break
     fi
 
-    if echo "$OUTPUT" | grep -q "ConnectError: \\[unavailable\\]" && [[ $attempt -lt $max_attempts ]]; then
+    if grep -q "ConnectError: \\[unavailable\\]" "$OUTPUT_FILE" && [[ $attempt -lt $max_attempts ]]; then
         echo "cursor-agent connection unavailable; retrying in ${sleep_seconds}s..."
+        rm -f "$OUTPUT_FILE" || true
         sleep "$sleep_seconds"
         attempt=$((attempt + 1))
         sleep_seconds=$((sleep_seconds * 2))
         continue
     fi
 
+    rm -f "$OUTPUT_FILE" || true
     exit "$EXIT_CODE"
 done
