@@ -80,7 +80,7 @@ jobs:
               run: |
                   set -euo pipefail
                   cd repo
-                  bash ../.github/scripts/tests-android/create-env.sh "${{ secrets.ENV_FILE_B64 }}"
+                  bash ../.github/scripts/create-env.sh "${{ secrets.ENV_FILE_B64 }}"
                   bash ../.github/scripts/generate-envied-sources.sh
 
             - name: Fix CI failure
