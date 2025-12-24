@@ -394,50 +394,83 @@ echo "cursor-agent path: $(command -v cursor-agent || echo 'not found')"
 echo "cursor-agent version:"
 cursor-agent --version 2>/dev/null || true
 
-# Retry transient Cursor connectivity errors (e.g., "ConnectError: [unavailable]").
-max_attempts="${CURSOR_AGENT_MAX_ATTEMPTS:-4}"
+# Retry cursor-agent when it fails to do its job (exit non-zero, "successful" but
+# missing expected PR side effects) or hangs.
+#
+# - A hang is defined as not finishing after 30 minutes.
+# - Retry up to 3 times total (including the first attempt).
+max_attempts="${CURSOR_AGENT_MAX_ATTEMPTS:-3}"
+hang_timeout_minutes="${CURSOR_AGENT_HANG_TIMEOUT_MINUTES:-30}"
 attempt=1
 sleep_seconds="${CURSOR_AGENT_RETRY_SLEEP_SECONDS:-10}"
 
-while true; do
+while [[ $attempt -le $max_attempts ]]; do
     echo "Running cursor-agent (attempt ${attempt}/${max_attempts})..."
-    set +e
+
     # Stream logs live (so GH Actions doesn't look "stuck") and avoid buffering the
     # entire output in memory (which can truncate/kill long runs).
     OUTPUT_FILE="$(mktemp -t cursor-agent-output.XXXXXX)"
-    CURSOR_AGENT_AUTOMATION=true cursor-agent -p "$PROMPT" --force --model "$MODEL" --output-format=text 2>&1 | tee "$OUTPUT_FILE"
-    # With `set -o pipefail`, the pipeline exit code may be from `tee`. We want
-    # cursor-agent's status (first command in pipeline).
+
+    set +e
+    # Use `timeout` so the run is killed/retried if it exceeds the hang threshold.
+    # `timeout` returns:
+    # - 0 if command succeeded
+    # - the command's exit code if it failed
+    # - 124 if timed out (hang)
+    CURSOR_AGENT_AUTOMATION=true timeout "${hang_timeout_minutes}m" cursor-agent -p "$PROMPT" --force --model "$MODEL" --output-format=text 2>&1 | tee "$OUTPUT_FILE"
     EXIT_CODE="${PIPESTATUS[0]}"
-    echo "cursor-agent exit code: ${EXIT_CODE}"
     set -e
 
-    if [[ $EXIT_CODE -eq 0 ]]; then
-        # Guardrail: if this run is PR-associated, the agent MUST have posted/updated
-        # a PR comment containing the run id marker; otherwise treat as failure so
-        # we never "succeed while doing nothing".
-        if [[ -n "${PR_NUMBER:-}" ]] && [[ -n "${PR_REPOSITORY:-}" ]] && command -v gh >/dev/null 2>&1; then
-            if ! gh api "repos/${PR_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate --jq ".[] | select(.user.login==\"cursor[bot]\") | .body" 2>/dev/null \
-                | grep -q "cursor-agent-run-id: ${GH_RUN_ID:-}"; then
-                echo "Error: cursor-agent exited 0 but did not post a cursor[bot] PR comment with marker: cursor-agent-run-id: ${GH_RUN_ID:-}"
-                echo "PR_REPOSITORY=${PR_REPOSITORY} PR_NUMBER=${PR_NUMBER}"
-                rm -f "$OUTPUT_FILE" || true
-                exit 1
-            fi
+    echo "cursor-agent exit code: ${EXIT_CODE}"
+
+    # Determine whether the agent "did its job" when PR-associated: it must
+    # post/update a cursor[bot] PR comment containing the run-id marker.
+    MARKER_OK="true"
+    if [[ -n "${PR_NUMBER:-}" ]] && [[ -n "${PR_REPOSITORY:-}" ]] && command -v gh >/dev/null 2>&1; then
+        if ! gh api "repos/${PR_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate --jq ".[] | select(.user.login==\"cursor[bot]\") | .body" 2>/dev/null \
+            | grep -q "cursor-agent-run-id: ${GH_RUN_ID:-}"; then
+            MARKER_OK="false"
         fi
+    fi
+
+    # Success criteria: exit 0 and (if PR-associated) marker present.
+    if [[ $EXIT_CODE -eq 0 ]] && [[ "$MARKER_OK" == "true" ]]; then
         rm -f "$OUTPUT_FILE" || true
         break
     fi
 
-    if grep -q "ConnectError: \\[unavailable\\]" "$OUTPUT_FILE" && [[ $attempt -lt $max_attempts ]]; then
-        echo "cursor-agent connection unavailable; retrying in ${sleep_seconds}s..."
+    # If this was the last attempt, fail with a clear error.
+    if [[ $attempt -ge $max_attempts ]]; then
+        if [[ $EXIT_CODE -eq 124 ]]; then
+            echo "Error: cursor-agent hung (did not finish within ${hang_timeout_minutes} minutes) on final attempt."
+        elif [[ "$MARKER_OK" != "true" ]]; then
+            echo "Error: cursor-agent exited 0 but did not post a cursor[bot] PR comment with marker: cursor-agent-run-id: ${GH_RUN_ID:-}"
+            echo "PR_REPOSITORY=${PR_REPOSITORY:-} PR_NUMBER=${PR_NUMBER:-}"
+        else
+            echo "Error: cursor-agent failed with exit code ${EXIT_CODE} on final attempt."
+        fi
         rm -f "$OUTPUT_FILE" || true
+        exit 1
+    fi
+
+    # Retry strategy:
+    # - For connectivity errors, keep exponential backoff.
+    # - For hangs/other failures, retry quickly.
+    if grep -q "ConnectError: \\[unavailable\\]" "$OUTPUT_FILE"; then
+        echo "cursor-agent connection unavailable; retrying in ${sleep_seconds}s..."
         sleep "$sleep_seconds"
-        attempt=$((attempt + 1))
         sleep_seconds=$((sleep_seconds * 2))
-        continue
+    elif [[ $EXIT_CODE -eq 124 ]]; then
+        echo "cursor-agent hung (>${hang_timeout_minutes}m); retrying..."
+        sleep 5
+    elif [[ "$MARKER_OK" != "true" ]]; then
+        echo "cursor-agent did not produce required PR comment marker; retrying..."
+        sleep 5
+    else
+        echo "cursor-agent failed (exit code ${EXIT_CODE}); retrying..."
+        sleep 5
     fi
 
     rm -f "$OUTPUT_FILE" || true
-    exit "$EXIT_CODE"
+    attempt=$((attempt + 1))
 done
