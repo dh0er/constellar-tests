@@ -253,6 +253,14 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
    - Else, treat it as not PR-associated.
 2) If tied to a PR:
    - Determine the PR base and head branches. Let HEAD_REF be the PR's head branch.
+   - PR context review (required before making any code changes):
+     - Fetch PR metadata from PR_REPOSITORY (via `gh api repos/$PR_REPOSITORY/pulls/$PR_NUMBER`) and record:
+       - PR title, state, base ref, head ref, head repo, and head sha.
+     - Read the PR discussion/history to understand previous fixes and constraints:
+       - Review the latest ~50 issue comments: `gh api repos/$PR_REPOSITORY/issues/$PR_NUMBER/comments --paginate`
+       - Review the PR commits and recent diffs: `gh pr view "$PR_NUMBER" --repo "$PR_REPOSITORY" --json commits,files`
+       - If a `cursor[bot]` comment exists, read it fully and treat it as prior fix context (do not duplicate work).
+     - Summarize in 2–4 bullets what has already been tried/changed and what remains failing, before proposing new edits.
    - Decide where to push fixes:
      - First, fetch PR metadata from PR_REPOSITORY (via `gh api repos/$PR_REPOSITORY/pulls/$PR_NUMBER`) and determine:
        - PR_HEAD_REPO = `.head.repo.full_name`
@@ -261,8 +269,22 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
      - If HEAD_REF already starts with the Fix Branch Prefix (e.g. `ci-fix/...`), PR_HEAD_REPO equals TARGET_REPOSITORY, and IS_FORK is false, then treat HEAD_REF as the fix branch and push commits directly to it so the PR updates immediately. Do NOT create a second branch like `ci-fix/ci-fix-...` in this case.
      - Otherwise, maintain a persistent fix branch for this HEAD_REF using the Fix Branch Prefix from Context (e.g. `${BRANCH_PREFIX}/${HEAD_REF}`), create it if missing, update it otherwise, and push changes to origin.
    - Attempt to resolve the CI failure with minimal, targeted edits consistent with the repo's style.
-   - If you pushed directly to HEAD_REF: post or update a single natural-language PR comment (1–2 sentences) that briefly explains the fix and notes that the PR branch was updated.
-   - If you used a separate persistent fix branch: do NOT create a PR. Instead, post or update a single natural-language PR comment (1–2 sentences) that briefly explains the fix and includes an inline compare link to quick-create a PR.
+   - PR comment policy (Option C: concise, but complete):
+     - Post or update a SINGLE `cursor[bot]` PR comment that contains the same information as your final report, in a concise form that fits in a GitHub comment.
+     - The comment MUST include:
+       - Root cause summary
+       - What changed (files / behavior)
+       - Branch/push strategy (where you pushed, commit SHA)
+       - Verification results (branch tip, comment updated)
+       - All downstream failures handled (each workflow: actionable fix or classification + mitigation notes)
+       - Links:
+         - GH_RUN_URL (workflow run): __GH_RUN_URL_VALUE__
+         - If using a separate fix branch, include a compare link to quick-create a PR
+       - A note telling the reader where to find full details:
+         - "Full logs and artifacts are attached to the workflow run (see GH_RUN_URL) and downloaded under RUN_ARTIFACTS_DIR in the agent run."
+     - If you pushed directly to HEAD_REF: the comment should explicitly say the PR head branch was updated.
+     - If you used a separate persistent fix branch: do NOT create a PR; instead include the compare link.
+     - Keep the comment compact (avoid pasting huge logs). If the full output would be long, include only the summary + links above.
    - Verification (required): after pushing and commenting, verify (via GitHub API) that:
      - the remote branch tip SHA is the expected commit SHA
      - the PR comment exists/was updated
