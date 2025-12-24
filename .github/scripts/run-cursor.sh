@@ -260,6 +260,19 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
        - Review the latest ~50 issue comments: `gh api repos/$PR_REPOSITORY/issues/$PR_NUMBER/comments --paginate`
        - Review the PR commits and recent diffs: `gh pr view "$PR_NUMBER" --repo "$PR_REPOSITORY" --json commits,files`
        - If a `cursor[bot]` comment exists, read it fully and treat it as prior fix context (do not duplicate work).
+     - Bugbot comments (required, pre-change only; do NOT poll after pushing):
+       - The PR may already contain bug review bot comments (e.g. "bugbot") that are NEW relative to the current PR head commit.
+       - Define PR_HEAD_SHA from the PR metadata and compute PR_HEAD_COMMIT_TIME_UTC via:
+         - `gh api repos/$PR_REPOSITORY/commits/$PR_HEAD_SHA --jq '.commit.committer.date // .commit.author.date'`
+       - From the PR issue comments, identify bugbot comments using heuristics:
+         - commenter login contains "bugbot" (case-insensitive), OR
+         - comment body mentions "bugbot" (case-insensitive).
+       - Determine whether bugbot comments are "new" (need action) using BOTH of these rules (use a small slack window of ~2 minutes to avoid clock/ordering edge cases):
+         - Rule A (time-based): bugbot comment created_at >= PR_HEAD_COMMIT_TIME_UTC - slack
+         - Rule B (last-comment-based): the MOST RECENT PR comment is a bugbot comment, AND PR_HEAD_COMMIT_TIME_UTC <= that comment's created_at + slack (meaning: no commits were pushed after the bugbot comment)
+       - Ignore bugbot comments that match neither Rule A nor Rule B ("old bugbot comments").
+       - For each NEW bugbot comment (Rule A or Rule B): if it contains clear, actionable issues fixable in TARGET_REPOSITORY (formatting, analyzer/lint, obvious bug, test reliability, workflow `run:` steps/scripts in TARGET repo, etc.), address them with minimal changes as part of this run BEFORE tackling workflow failures.
+       - If a NEW bugbot comment is non-actionable or unclear, explicitly say so later in your PR summary comment and link to it.
      - Summarize in 2–4 bullets what has already been tried/changed and what remains failing, before proposing new edits.
    - Decide where to push fixes:
      - First, fetch PR metadata from PR_REPOSITORY (via `gh api repos/$PR_REPOSITORY/pulls/$PR_NUMBER`) and determine:
