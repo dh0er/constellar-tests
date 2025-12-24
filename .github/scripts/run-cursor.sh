@@ -243,7 +243,8 @@ if [[ -z "$TARGET_DEFAULT_BRANCH" ]]; then
     fi
 fi
 
-PROMPT="$(cat <<'EOF'
+PROMPT_FILE="$(mktemp -t cursor-agent-prompt.XXXXXX)"
+cat > "${PROMPT_FILE}" <<'EOF'
 You are operating in a GitHub Actions runner.
 
 The GitHub CLI is available as `gh` and authenticated via `GH_TOKEN`. Git is available.
@@ -413,7 +414,8 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
   - Append commands to POST_RUN_SCRIPT to push commits and post/update a single PR comment (do not execute them during the run).
 - If not PR-associated: append commands to POST_RUN_SCRIPT to push a fix branch and open a PR (do not execute them during the run).
 EOF
-)"
+PROMPT="$(cat "${PROMPT_FILE}")"
+rm -f "${PROMPT_FILE}" || true
 
 PROMPT="${PROMPT//__RUN_REPOSITORY_VALUE__/${RUN_REPOSITORY}}"
 PROMPT="${PROMPT//__GH_RUN_ID_VALUE__/${GH_RUN_ID:-}}"
@@ -459,7 +461,7 @@ cursor-agent --version 2>/dev/null || true
 # - A hang is defined as not finishing after 30 minutes.
 # - Retry up to 3 times total (including the first attempt).
 max_attempts="${CURSOR_AGENT_MAX_ATTEMPTS:-3}"
-hang_timeout_minutes="${CURSOR_AGENT_HANG_TIMEOUT_MINUTES:30}"
+hang_timeout_minutes="${CURSOR_AGENT_HANG_TIMEOUT_MINUTES:-30}"
 attempt=1
 sleep_seconds="${CURSOR_AGENT_RETRY_SLEEP_SECONDS:-10}"
 
