@@ -411,13 +411,29 @@ while [[ $attempt -le $max_attempts ]]; do
     # entire output in memory (which can truncate/kill long runs).
     OUTPUT_FILE="$(mktemp -t cursor-agent-output.XXXXXX)"
 
+    # cursor-agent tends to buffer heavily when stdout isn't a TTY (common in CI),
+    # which makes GitHub Actions appear "silent" for long stretches. Run it under a
+    # pseudo-terminal when possible so progress logs flush incrementally.
+    CURSOR_AGENT_ARGS=(cursor-agent -p "$PROMPT" --force --model "$MODEL" --output-format=text)
+    CURSOR_AGENT_RUNNER=("${CURSOR_AGENT_ARGS[@]}")
+    if command -v script >/dev/null 2>&1; then
+        # Linux (util-linux): script -q -e -c "<cmd>" /dev/null
+        # macOS/BSD:          script -q /dev/null <cmd> [args...]
+        if script -q -e -c "true" /dev/null >/dev/null 2>&1; then
+            CURSOR_AGENT_CMD_STR="$(printf '%q ' "${CURSOR_AGENT_ARGS[@]}")"
+            CURSOR_AGENT_RUNNER=(script -q -e -c "${CURSOR_AGENT_CMD_STR}" /dev/null)
+        else
+            CURSOR_AGENT_RUNNER=(script -q /dev/null "${CURSOR_AGENT_ARGS[@]}")
+        fi
+    fi
+
     set +e
     # Use `timeout` so the run is killed/retried if it exceeds the hang threshold.
     # `timeout` returns:
     # - 0 if command succeeded
     # - the command's exit code if it failed
     # - 124 if timed out (hang)
-    CURSOR_AGENT_AUTOMATION=true timeout "${hang_timeout_minutes}m" cursor-agent -p "$PROMPT" --force --model "$MODEL" --output-format=text 2>&1 | tee "$OUTPUT_FILE"
+    CURSOR_AGENT_AUTOMATION=true timeout "${hang_timeout_minutes}m" "${CURSOR_AGENT_RUNNER[@]}" 2>&1 | tee "$OUTPUT_FILE"
     EXIT_CODE="${PIPESTATUS[0]}"
     set -e
 

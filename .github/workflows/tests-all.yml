@@ -295,14 +295,37 @@ jobs:
                   out_dir="downstream-artifacts/${{ matrix.workflow_file }}-run-${RUN_ID}"
                   mkdir -p "${out_dir}"
 
-                  artifacts_json="$(curl -sSfL \
-                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                    -H "Accept: application/vnd.github+json" \
-                    "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts")"
+                  artifacts_json_path="${out_dir}/_artifacts.json"
 
-                  echo "$artifacts_json" | python3 - <<'PY' > "${out_dir}/_artifact_index.txt"
+                  # Diagnostic output (helps debug intermittent empty/invalid API responses).
+                  # We still fail the step if the request fails; we just print helpful context first.
+                  set +e
+                  artifacts_http_code="$(
+                    curl -sSfL \
+                      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                      -H "Accept: application/vnd.github+json" \
+                      -o "${artifacts_json_path}" \
+                      -w '%{http_code}' \
+                      "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts"
+                  )"
+                  artifacts_curl_exit_code="$?"
+                  set -e
+
+                  artifacts_bytes="$(wc -c < "${artifacts_json_path}" 2>/dev/null || echo 0)"
+                  echo "Artifacts API diagnostics: curl_exit=${artifacts_curl_exit_code} http_code=${artifacts_http_code:-<empty>} bytes=${artifacts_bytes}"
+
+                  if [[ "${artifacts_curl_exit_code}" != "0" ]]; then
+                    exit "${artifacts_curl_exit_code}"
+                  fi
+
+                  cat "${artifacts_json_path}" | python3 - <<'PY' > "${out_dir}/_artifact_index.txt"
                   import json,sys,os,re
-                  data=json.load(sys.stdin)
+                  raw = sys.stdin.read()
+                  if not raw.strip():
+                      # GitHub can sometimes return an empty response body even when the request
+                      # succeeded. Treat this as "no artifacts".
+                      sys.exit(0)
+                  data=json.loads(raw)
                   arts=data.get("artifacts",[]) or []
                   for a in arts:
                       name=a.get("name") or "artifact"

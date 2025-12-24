@@ -6,6 +6,22 @@ on:
         # react to (not the filename).
         workflows: [Run All Tests]
         types: [completed]
+    # Allows manually re-running the agent against an *existing* workflow run,
+    # but using the *current* workflow definition (useful when you updated the
+    # agent workflow/scripts and want to re-try a past failure).
+    workflow_dispatch:
+        inputs:
+            run_repository:
+                description: "Repo that contains the workflow run to analyze (owner/repo). Defaults to this repo."
+                required: false
+                default: ""
+            run_id:
+                description: "The workflow run id to analyze (e.g. 1234567890)."
+                required: true
+            run_url:
+                description: "Optional: workflow run URL (if omitted, the script will try to resolve it via the API)."
+                required: false
+                default: ""
 
 permissions:
     contents: write
@@ -15,7 +31,12 @@ permissions:
 jobs:
     attempt-fix:
         if: >-
-            ${{ github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.name != 'Fix CI Failures' }}
+            ${{
+              (github.event_name == 'workflow_run' &&
+                github.event.workflow_run.conclusion == 'failure' &&
+                github.event.workflow_run.name != 'Fix CI Failures') ||
+              (github.event_name == 'workflow_dispatch')
+            }}
         runs-on: ubuntu-latest
         timeout-minutes: 120
         steps:
@@ -24,12 +45,16 @@ jobs:
               with:
                   fetch-depth: 0
 
-            - name: Debug workflow_run context (what cursor-agent receives)
+            - name: Debug context (what cursor-agent receives)
               if: ${{ always() }}
               run: |
                   set -euo pipefail
-                  echo "=== workflow_run (tests repo) context ==="
+                  echo "=== cursor-agent context ==="
+                  echo "event_name=${{ github.event_name }}"
                   echo "repository=${{ github.repository }}"
+                  echo "ref=${{ github.ref }}"
+                  echo "sha=${{ github.sha }}"
+                  echo "--- workflow_run (when event_name=workflow_run) ---"
                   echo "workflow_run.id=${{ github.event.workflow_run.id }}"
                   echo "workflow_run.name=${{ github.event.workflow_run.name }}"
                   echo "workflow_run.event=${{ github.event.workflow_run.event }}"
@@ -41,6 +66,10 @@ jobs:
                   echo "workflow_run.pull_requests=${{ toJson(github.event.workflow_run.pull_requests) }}"
                   echo "workflow_run.actor=${{ github.event.workflow_run.actor && github.event.workflow_run.actor.login || '' }}"
                   echo "workflow_run.triggering_actor=${{ github.event.workflow_run.triggering_actor && github.event.workflow_run.triggering_actor.login || '' }}"
+                  echo "--- workflow_dispatch inputs (when event_name=workflow_dispatch) ---"
+                  echo "inputs.run_repository=${{ inputs.run_repository }}"
+                  echo "inputs.run_id=${{ inputs.run_id }}"
+                  echo "inputs.run_url=${{ inputs.run_url }}"
                   echo "========================================"
 
             - name: Setup Flutter
@@ -95,13 +124,28 @@ jobs:
                   GH_TOKEN: ${{ secrets.CURSOR_AGENT_GH_TOKEN || github.token }}
                   TARGET_GH_TOKEN: ${{ secrets.CURSOR_AGENT_GH_TOKEN || '' }}
                   BRANCH_PREFIX: ci-fix
-                  # Repo where this workflow_run event happened (this repo).
-                  RUN_REPOSITORY: ${{ github.repository }}
+                  # Repo where the run to analyze happened.
+                  # - workflow_run: this repo
+                  # - workflow_dispatch: optional override (owner/repo)
+                  RUN_REPOSITORY: >-
+                      ${{
+                        (github.event_name == 'workflow_dispatch' && inputs.run_repository != '' && inputs.run_repository) ||
+                        github.repository
+                      }}
                   GH_REPOSITORY: ${{ secrets.GH_REPOSITORY }}
                   GH_REPOSITORY_OWNER: ${{ secrets.GH_REPOSITORY_OWNER }}
                   GH_REPOSITORY_NAME: ${{ secrets.GH_REPOSITORY_NAME }}
-                  GH_RUN_ID: ${{ github.event.workflow_run.id }}
-                  GH_RUN_URL: ${{ github.event.workflow_run.html_url }}
+                  # Run id/url for the run to analyze.
+                  GH_RUN_ID: >-
+                      ${{
+                        (github.event_name == 'workflow_dispatch' && inputs.run_id) ||
+                        github.event.workflow_run.id
+                      }}
+                  GH_RUN_URL: >-
+                      ${{
+                        (github.event_name == 'workflow_dispatch' && inputs.run_url) ||
+                        github.event.workflow_run.html_url
+                      }}
                   # Where the target repo was cloned to.
                   TARGET_WORKDIR: repo
               run: |
