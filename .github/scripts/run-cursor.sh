@@ -397,10 +397,10 @@ cursor-agent --version 2>/dev/null || true
 # Retry cursor-agent when it fails to do its job (exit non-zero, "successful" but
 # missing expected PR side effects) or hangs.
 #
-# - A hang is defined as not finishing after 30 minutes.
+# - A hang is defined as not finishing after 45 minutes.
 # - Retry up to 3 times total (including the first attempt).
 max_attempts="${CURSOR_AGENT_MAX_ATTEMPTS:-3}"
-hang_timeout_minutes="${CURSOR_AGENT_HANG_TIMEOUT_MINUTES:-30}"
+hang_timeout_minutes="${CURSOR_AGENT_HANG_TIMEOUT_MINUTES:-45}"
 attempt=1
 sleep_seconds="${CURSOR_AGENT_RETRY_SLEEP_SECONDS:-10}"
 
