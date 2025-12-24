@@ -318,21 +318,37 @@ jobs:
                     exit "${artifacts_curl_exit_code}"
                   fi
 
-                  cat "${artifacts_json_path}" | python3 - <<'PY' > "${out_dir}/_artifact_index.txt"
-                  import json,sys,os,re
-                  raw = sys.stdin.read()
+                  # IMPORTANT: `python3 - <<'PY'` reads the *script* from stdin, so we cannot
+                  # simultaneously pipe JSON into stdin. Read the downloaded JSON file instead.
+                  python3 - "${artifacts_json_path}" <<'PY' > "${out_dir}/_artifact_index.txt"
+                  import json,sys,re
+
+                  path = sys.argv[1]
+                  try:
+                      raw = open(path, "r", encoding="utf-8", errors="replace").read()
+                  except OSError as e:
+                      print(f"Warning: could not read artifacts json file: {e}", file=sys.stderr)
+                      sys.exit(0)
+
                   if not raw.strip():
                       # GitHub can sometimes return an empty response body even when the request
                       # succeeded. Treat this as "no artifacts".
                       sys.exit(0)
-                  data=json.loads(raw)
-                  arts=data.get("artifacts",[]) or []
+
+                  try:
+                      data = json.loads(raw)
+                  except json.JSONDecodeError as e:
+                      print(f"Warning: artifacts response was not valid JSON: {e}", file=sys.stderr)
+                      # Best-effort: don't fail the whole job during artifact collection.
+                      sys.exit(0)
+
+                  arts = data.get("artifacts", []) or []
                   for a in arts:
-                      name=a.get("name") or "artifact"
-                      art_id=a.get("id")
+                      name = a.get("name") or "artifact"
+                      art_id = a.get("id")
                       if not art_id:
                           continue
-                      safe=re.sub(r'[^A-Za-z0-9._-]+','_',name)
+                      safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
                       print(f"{art_id}\t{safe}\t{name}")
                   PY
 
