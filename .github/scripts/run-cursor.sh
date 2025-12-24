@@ -284,12 +284,13 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
    - Attempt to resolve the CI failure with minimal, targeted edits consistent with the repo's style.
    - PR comment policy (Option C: concise, but complete):
      - Post or update a SINGLE `cursor[bot]` PR comment that contains the same information as your final report, in a concise form that fits in a GitHub comment.
-     - The comment MUST include:
+   - The comment MUST include:
        - Root cause summary
        - What changed (files / behavior)
        - Branch/push strategy (where you pushed, commit SHA)
        - Verification results (branch tip, comment updated)
        - All downstream failures handled (each workflow: actionable fix or classification + mitigation notes)
+       - A unique marker line EXACTLY like: `cursor-agent-run-id: __GH_RUN_ID_VALUE__`
        - Links:
          - GH_RUN_URL (workflow run): __GH_RUN_URL_VALUE__
          - If using a separate fix branch, include a compare link to quick-create a PR
@@ -306,7 +307,10 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
    - Treat the TARGET default branch as the failing base. Create a fix branch from the TARGET default branch using the Fix Branch Prefix and the run id for uniqueness.
    - Attempt to resolve the CI failure with minimal, targeted edits consistent with the repo's style.
    - If and only if you made a safe, actionable fix: push the fix branch and create a PR back into the default branch with a concise title/body.
-4) If no actionable fix is possible, make no changes and post no comment / create no PR.
+4) If no actionable fix is possible:
+   - Make no code changes.
+   - Still provide a clear, explicit final report in your output explaining WHY (missing artifacts, auth/permission issue, no failing downstream workflows, etc.).
+   - If PR-associated: still post/update a SINGLE `cursor[bot]` PR comment explaining the decision (see PR comment policy above). Do NOT silently exit.
 
 # Inputs and conventions:
 - Use `gh api`, `gh run view`, `gh pr view`, `gh pr diff`, `gh pr list`, `gh run download`, and git commands as needed.
@@ -409,6 +413,18 @@ while true; do
     set -e
 
     if [[ $EXIT_CODE -eq 0 ]]; then
+        # Guardrail: if this run is PR-associated, the agent MUST have posted/updated
+        # a PR comment containing the run id marker; otherwise treat as failure so
+        # we never "succeed while doing nothing".
+        if [[ -n "${PR_NUMBER:-}" ]] && [[ -n "${PR_REPOSITORY:-}" ]] && command -v gh >/dev/null 2>&1; then
+            if ! gh api "repos/${PR_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate --jq ".[] | select(.user.login==\"cursor[bot]\") | .body" 2>/dev/null \
+                | grep -q "cursor-agent-run-id: ${GH_RUN_ID:-}"; then
+                echo "Error: cursor-agent exited 0 but did not post a cursor[bot] PR comment with marker: cursor-agent-run-id: ${GH_RUN_ID:-}"
+                echo "PR_REPOSITORY=${PR_REPOSITORY} PR_NUMBER=${PR_NUMBER}"
+                rm -f "$OUTPUT_FILE" || true
+                exit 1
+            fi
+        fi
         rm -f "$OUTPUT_FILE" || true
         break
     fi
