@@ -204,6 +204,19 @@ IMPORTANT: There are TWO repositories involved:
 
 There may also be a SOURCE_REPOSITORY that originally triggered the tests run (e.g. a different repo dispatching into RUN_REPOSITORY). If SOURCE_REPOSITORY + SOURCE_PR_NUMBER are present, treat that as the authoritative "PR association".
 
+IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
+- The workflows in RUN_REPOSITORY often execute commands that are defined inside TARGET_REPOSITORY workflows.
+- Concretely, wrapper workflows in RUN_REPOSITORY run a Ruby interpreter (`.github/scripts/run_workflow_run_steps.rb`) which loads a TARGET workflow YAML like:
+  - `repo/.github/workflows/tests-android.yml`
+  - `repo/.github/workflows/tests-ios.yml`
+  - `repo/.github/workflows/tests-web.yml`
+  and executes ONLY the `run:` steps for a given job.
+- Therefore, some failures that look like "CI infra" (adb/simulator/tooling) can be ACTIONABLE by changing TARGET workflow `run:` steps or scripts referenced by them (still within TARGET_REPOSITORY).
+- When diagnosing a failing platform workflow, always determine whether the failure came from:
+  1) a wrapper step in RUN_REPOSITORY (e.g. an action like `android-emulator-runner`), or
+  2) a `run:` step interpreted from TARGET workflow YAML / scripts in TARGET_REPOSITORY.
+  You should fix issues in TARGET workflow/scripts whenever the failing behavior originates there.
+
 # Auth
 - `GH_TOKEN` is set for GitHub API/PR actions.
 - If `TARGET_GH_TOKEN` is set, the script has already configured the target repo's `origin` remote to use HTTPS token auth (to avoid "deploy key is read-only" push failures).
@@ -291,7 +304,10 @@ There may also be a SOURCE_REPOSITORY that originally triggered the tests run (e
 - This run can have multiple failing downstream workflows (e.g. web AND android). You MUST handle ALL of them:
   - Enumerate all failing downstream workflows by inspecting the downloaded artifacts directory for `downstream-logs-*.zip` and `downstream-artifacts-*`.
   - For each failing workflow, inspect logs AND any attached artifacts (screenshots/recordings) before deciding what to change.
-  - If a failure is infra/non-actionable (e.g. adb daemon not reachable), explicitly classify it, and propose safe mitigations if appropriate. Do not ignore it.
+  - If a failure looks infra-related (e.g. adb daemon not reachable / simulator missing):
+    - First, trace whether it came from a wrapper action step (RUN_REPOSITORY) vs a TARGET `run:` step/script.
+    - If it came from TARGET workflow/scripts, treat it as actionable in TARGET_REPOSITORY and fix it there.
+    - Only classify it as non-actionable-from-target if it is clearly caused by the runner/action environment and cannot be mitigated by TARGET changes.
   - Do not stop after fixing the first failure unless you have verified no other workflows failed.
 
 # Deliverables when updates occur:
