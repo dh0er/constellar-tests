@@ -99,6 +99,16 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
        - PR_HEAD_REPO = `.head.repo.full_name`
        - HEAD_REF = `.head.ref`
        - IS_FORK = `.head.repo.fork`
+     - IMPORTANT (sync before exit to avoid push rejection):
+       - The PR head branch on `origin` may advance while you are running (other CI, other agents, manual updates). A workflow being triggered from a given SHA does NOT guarantee the branch ref stays unchanged.
+       - Therefore, BEFORE you finish your work (still during the agent run, NOT in POST_RUN_SCRIPT), you MUST:
+         - `git fetch origin "$HEAD_REF"`
+         - Rebase your local work on top of the current remote head so the deferred push will be a fast-forward:
+           - If you are pushing directly to `HEAD_REF`: `git rebase "origin/$HEAD_REF"`
+           - If you are using a separate persistent fix branch: fetch/rebase against that branch’s remote tip instead.
+         - If the rebase produces conflicts:
+           - You MUST resolve them (preferred) and continue the rebase, keeping changes minimal.
+           - If you cannot confidently resolve a conflict, abort (`git rebase --abort`) and STOP making further changes. In your final report, explain that the remote head advanced and requires a human conflict resolution.
      - If HEAD_REF already starts with the Fix Branch Prefix (e.g. `ci-fix/...`), PR_HEAD_REPO equals TARGET_REPOSITORY, and IS_FORK is false, then treat HEAD_REF as the fix branch and push commits directly to it so the PR updates immediately. Do NOT create a second branch like `ci-fix/ci-fix-...` in this case.
      - Otherwise, maintain a persistent fix branch for this HEAD_REF using the Fix Branch Prefix from Context (e.g. `${BRANCH_PREFIX}/${HEAD_REF}`), create it if missing, update it otherwise, and push changes to origin.
    - Attempt to resolve the CI failure with minimal, targeted edits consistent with the repo's style.
