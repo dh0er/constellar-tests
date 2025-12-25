@@ -340,7 +340,7 @@ while [[ $attempt -le $max_attempts ]]; do
     # - Use NDJSON streaming events (`--output-format=stream-json`)
     # - Emit partial text chunks as they are generated (`--stream-partial-output`)
     # Docs: https://cursor.com/docs/cli/reference/output-format
-    CURSOR_AGENT_ARGS=(cursor-agent -p "$PROMPT_POINTER" --force --model "$MODEL" --print --output-format=stream-json --stream-partial-output)
+    CURSOR_AGENT_ARGS=(cursor-agent -p "$PROMPT_POINTER" --force --model "$MODEL" --print --output-format=stream-json)
     CURSOR_AGENT_RUNNER=("${CURSOR_AGENT_ARGS[@]}")
     if command -v script >/dev/null 2>&1; then
         # Linux (util-linux): script -q -e -c "<cmd>" /dev/null
