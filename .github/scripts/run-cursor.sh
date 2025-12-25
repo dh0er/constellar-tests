@@ -364,9 +364,18 @@ while [[ $attempt -le $max_attempts ]]; do
     # Wrap the *entire* logging pipeline inside `timeout`. Otherwise, if the wrapped
     # command leaves behind a child that keeps stdout open, the outer `tee`/pipe can
     # block forever even though `timeout` already fired.
+    # cursor-agent emits NDJSON (stream-json). That output is useful for machines but noisy for humans.
+    # Keep the raw stream in OUTPUT_FILE, but render a readable console view by extracting only the
+    # "thinking delta" text fragments.
+    STREAM_FILTER="${SCRIPT_DIR}/cursor_stream_filter.py"
     CURSOR_AGENT_AUTOMATION=true timeout --foreground --kill-after=30s "${hang_timeout_minutes}m" \
-        bash -c 'set -o pipefail; out="$1"; shift; "$@" 2>&1 | tee "$out"' \
-        bash "$OUTPUT_FILE" "${CURSOR_AGENT_RUNNER[@]}"
+        bash -c 'set -o pipefail; out="$1"; filter="$2"; shift 2;
+            if command -v python3 >/dev/null 2>&1 && [[ -f "$filter" ]]; then
+                "$@" 2>&1 | tee "$out" | python3 -u "$filter"
+            else
+                "$@" 2>&1 | tee "$out"
+            fi' \
+        bash "$OUTPUT_FILE" "$STREAM_FILTER" "${CURSOR_AGENT_RUNNER[@]}"
     EXIT_CODE="$?"
     set -e
 
