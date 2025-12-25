@@ -336,7 +336,11 @@ while [[ $attempt -le $max_attempts ]]; do
     # cursor-agent tends to buffer heavily when stdout isn't a TTY (common in CI),
     # which makes GitHub Actions appear "silent" for long stretches. Run it under a
     # pseudo-terminal when possible so progress logs flush incrementally.
-    CURSOR_AGENT_ARGS=(cursor-agent -p "$PROMPT_POINTER" --force --model "$MODEL" --output-format=text)
+    # Maximize immediate output:
+    # - Use NDJSON streaming events (`--output-format=stream-json`)
+    # - Emit partial text chunks as they are generated (`--stream-partial-output`)
+    # Docs: https://cursor.com/docs/cli/reference/output-format
+    CURSOR_AGENT_ARGS=(cursor-agent -p "$PROMPT_POINTER" --force --model "$MODEL" --print --output-format=stream-json --stream-partial-output)
     CURSOR_AGENT_RUNNER=("${CURSOR_AGENT_ARGS[@]}")
     if command -v script >/dev/null 2>&1; then
         # Linux (util-linux): script -q -e -c "<cmd>" /dev/null
@@ -368,11 +372,32 @@ while [[ $attempt -le $max_attempts ]]; do
 
     echo "cursor-agent exit code: ${EXIT_CODE}"
 
-    # Success criteria: exit 0.
-    # (Remote side-effects like pushes/comments are intentionally deferred to POST_RUN_SCRIPT.)
+    # Success criteria:
+    # - cursor-agent exits 0
+    # - AND it produced at least one actionable deferred command in POST_RUN_SCRIPT
+    #
+    # Rationale: "exit 0 but no deferred commands" usually means the agent didn't actually
+    # take the required actions (push/comment/etc.) and we should retry.
     if [[ $EXIT_CODE -eq 0 ]]; then
+        if post_run_script_has_actionable_commands "${POST_RUN_SCRIPT}"; then
+            rm -f "$OUTPUT_FILE" || true
+            break
+        fi
+
+        echo "cursor-agent exited 0 but produced no actionable commands in ${POST_RUN_SCRIPT}."
+
+        # If this was the last attempt, fail with a clear error.
+        if [[ $attempt -ge $max_attempts ]]; then
+            echo "Error: cursor-agent exited successfully but produced no actionable commands on final attempt."
+            rm -f "$OUTPUT_FILE" || true
+            exit 1
+        fi
+
+        echo "Retrying because there are no actionable deferred commands..."
         rm -f "$OUTPUT_FILE" || true
-        break
+        sleep 5
+        attempt=$((attempt + 1))
+        continue
     fi
 
     # Special case: if cursor-agent timed out but already produced actionable deferred commands,
