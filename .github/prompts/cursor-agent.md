@@ -39,6 +39,12 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
 # - That script will be executed after you exit. Treat it as your "deferred side effects" queue.
 # - The script must be safe to run once (idempotent where possible) and should assume it runs
 #   with working directory set to the TARGET repo checkout.
+#
+# IMPORTANT EXECUTION CONTRACT (must follow exactly):
+# - The POST_RUN_SCRIPT must contain AT MOST ONE `git push` command, and it must be the final
+#   remote-mutating action (to avoid triggering multiple overlapping CI runs for the same PR).
+# - If you need multiple commits, that's OK, but push them together once at the very end.
+# - Do not "push a first attempt" and then "push a refinement" in the same agent run.
 
 # Context (values)
 - RUN_REPOSITORY: __RUN_REPOSITORY_VALUE__

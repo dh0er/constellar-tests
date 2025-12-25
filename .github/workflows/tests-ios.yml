@@ -20,6 +20,11 @@ on:
         required: false
         default: ""
 
+concurrency:
+  group: >-
+    tests-ios-${{ inputs.source_repo || github.repository }}-${{ inputs.source_pr || inputs.source_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Run tests on iOS Simulator

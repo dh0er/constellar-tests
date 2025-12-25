@@ -28,6 +28,11 @@ permissions:
     contents: read
     actions: write
 
+concurrency:
+    group: >-
+        tests-all-${{ inputs.source_repo || github.repository }}-${{ inputs.source_pr || inputs.source_ref || github.run_id }}
+    cancel-in-progress: true
+
 jobs:
     record-context:
         name: Record cursor-agent context

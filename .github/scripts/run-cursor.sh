@@ -1,6 +1,101 @@
 #!/bin/bash
 set -euo pipefail
 
+ORIGINAL_PATH="${PATH}"
+REAL_GIT_BIN="$(command -v git || true)"
+REAL_GH_BIN="$(command -v gh || true)"
+
+create_blocked_git_and_gh_wrappers() {
+    local wrapper_dir="${1:?wrapper_dir is required}"
+
+    mkdir -p "${wrapper_dir}"
+
+    # Block remote mutations during the cursor-agent run. The agent MUST append such commands
+    # to the post-run script instead (see cursor-agent prompt).
+    #
+    # We intentionally enforce this at runtime because some agents may still attempt to run
+    # `git push` directly, which can cause multiple CI runs to trigger while the agent is
+    # still running.
+    cat > "${wrapper_dir}/git" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+REAL_GIT_BIN="${REAL_GIT_BIN:-}"
+POST_RUN_SCRIPT="${CURSOR_AGENT_POST_RUN_SCRIPT:-}"
+
+if [[ -z "${REAL_GIT_BIN}" ]]; then
+  echo "Error: REAL_GIT_BIN not set; cannot proxy git." >&2
+  exit 99
+fi
+
+if [[ "${1:-}" == "push" ]]; then
+  echo "Error: 'git push' is blocked during the cursor-agent run." >&2
+  if [[ -n "${POST_RUN_SCRIPT}" ]]; then
+    echo "Append push commands to: ${POST_RUN_SCRIPT}" >&2
+  fi
+  exit 99
+fi
+
+exec "${REAL_GIT_BIN}" "$@"
+SH
+    chmod +x "${wrapper_dir}/git"
+
+    cat > "${wrapper_dir}/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+REAL_GH_BIN="${REAL_GH_BIN:-}"
+POST_RUN_SCRIPT="${CURSOR_AGENT_POST_RUN_SCRIPT:-}"
+
+if [[ -z "${REAL_GH_BIN}" ]]; then
+  echo "Error: REAL_GH_BIN not set; cannot proxy gh." >&2
+  exit 99
+fi
+
+# Allow read-only operations. Block commands that mutate remote state.
+case "${1:-}" in
+  pr)
+    case "${2:-}" in
+      comment|create|edit|merge|review|close|reopen)
+        echo "Error: 'gh pr ${2}' is blocked during the cursor-agent run." >&2
+        if [[ -n "${POST_RUN_SCRIPT}" ]]; then
+          echo "Append this command to: ${POST_RUN_SCRIPT}" >&2
+        fi
+        exit 99
+        ;;
+    esac
+    ;;
+  issue)
+    case "${2:-}" in
+      comment|create|edit|close|reopen)
+        echo "Error: 'gh issue ${2}' is blocked during the cursor-agent run." >&2
+        if [[ -n "${POST_RUN_SCRIPT}" ]]; then
+          echo "Append this command to: ${POST_RUN_SCRIPT}" >&2
+        fi
+        exit 99
+        ;;
+    esac
+    ;;
+esac
+
+exec "${REAL_GH_BIN}" "$@"
+SH
+    chmod +x "${wrapper_dir}/gh"
+}
+
+count_git_push_commands() {
+    local script_path="${1:-}"
+    if [[ -z "${script_path}" ]] || [[ ! -f "${script_path}" ]]; then
+        echo "0"
+        return 0
+    fi
+    # Count obvious push invocations. We intentionally keep this conservative so we don't
+    # accidentally miss a second push that would trigger a second CI run.
+    local c=0
+    c="$(grep -cE '^[[:space:]]*git[[:space:]]+push(\s|$)' "${script_path}" 2>/dev/null || true)"
+    echo "${c}"
+}
+
 normalize_repo_slug() {
     # Accept:
     # - owner/repo
@@ -340,6 +435,11 @@ while [[ $attempt -le $max_attempts ]]; do
     # - Use NDJSON streaming events (`--output-format=stream-json`)
     # - Emit partial text chunks as they are generated (`--stream-partial-output`)
     # Docs: https://cursor.com/docs/cli/reference/output-format
+    # During the agent run, block remote mutations by shadowing `git`/`gh` with wrappers.
+    # This guarantees we don't accidentally push mid-run and create multiple overlapping CI runs.
+    BLOCKED_BIN_DIR="$(mktemp -d -t cursor-agent-blocked-bin.XXXXXX)"
+    create_blocked_git_and_gh_wrappers "${BLOCKED_BIN_DIR}"
+
     CURSOR_AGENT_ARGS=(cursor-agent -p "$PROMPT_POINTER" --force --model "$MODEL" --print --output-format=stream-json)
     CURSOR_AGENT_RUNNER=("${CURSOR_AGENT_ARGS[@]}")
     if command -v script >/dev/null 2>&1; then
@@ -368,7 +468,8 @@ while [[ $attempt -le $max_attempts ]]; do
     # Keep the raw stream in OUTPUT_FILE, but render a readable console view by extracting only the
     # "thinking delta" text fragments.
     STREAM_FILTER="${SCRIPT_DIR}/cursor_stream_filter.py"
-    CURSOR_AGENT_AUTOMATION=true timeout --foreground --kill-after=30s "${hang_timeout_minutes}m" \
+    CURSOR_AGENT_AUTOMATION=true REAL_GIT_BIN="${REAL_GIT_BIN}" REAL_GH_BIN="${REAL_GH_BIN}" PATH="${BLOCKED_BIN_DIR}:${PATH}" \
+      timeout --foreground --kill-after=30s "${hang_timeout_minutes}m" \
         bash -c 'set -o pipefail; out="$1"; filter="$2"; shift 2;
             if command -v python3 >/dev/null 2>&1 && [[ -f "$filter" ]]; then
                 "$@" 2>&1 | tee "$out" | python3 -u "$filter"
@@ -378,6 +479,8 @@ while [[ $attempt -le $max_attempts ]]; do
         bash "$OUTPUT_FILE" "$STREAM_FILTER" "${CURSOR_AGENT_RUNNER[@]}"
     EXIT_CODE="$?"
     set -e
+
+    rm -rf "${BLOCKED_BIN_DIR}" >/dev/null 2>&1 || true
 
     echo "cursor-agent exit code: ${EXIT_CODE}"
 
@@ -456,6 +559,25 @@ done
 # In the success case, execute the deferred post-run script now. This is where
 # pushes/PR comments happen (never during the agent run itself).
 if post_run_script_has_actionable_commands "${POST_RUN_SCRIPT}"; then
+    # Enforce "one push at the very end" contract: multiple pushes in the post-run script
+    # will reliably create parallel CI runs for the same PR.
+    PUSH_COUNT="$(count_git_push_commands "${POST_RUN_SCRIPT}")"
+    if [[ "${PUSH_COUNT}" -gt 1 ]]; then
+        echo "Error: POST_RUN_SCRIPT contains ${PUSH_COUNT} 'git push' commands. Expected at most 1."
+        echo "Fix the agent behavior to push only once at the end."
+        echo "=== Deferred post-run script (sanitized) ==="
+        if command -v sed >/dev/null 2>&1; then
+            sed -E \
+                -e 's#(https://x-access-token:)[^@]+@#\\1***@#g' \
+                -e 's#\\b(ghp|github_pat)_[A-Za-z0-9_]+#\\1_***#g' \
+                "${POST_RUN_SCRIPT}"
+        else
+            cat "${POST_RUN_SCRIPT}"
+        fi
+        echo "=== End deferred post-run script ==="
+        exit 1
+    fi
+
     echo "Executing deferred post-run commands from ${POST_RUN_SCRIPT}..."
     echo "=== Deferred post-run script (sanitized) ==="
     # Avoid leaking secrets into CI logs. Redact common token patterns if present.
