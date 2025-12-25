@@ -439,3 +439,29 @@ while [[ $attempt -le $max_attempts ]]; do
     rm -f "$OUTPUT_FILE" || true
     attempt=$((attempt + 1))
 done
+
+# If we reached here, either:
+# - cursor-agent succeeded and we `break`'d out of the loop, or
+# - we exhausted retries and already `exit 1`'d above.
+#
+# In the success case, execute the deferred post-run script now. This is where
+# pushes/PR comments happen (never during the agent run itself).
+if post_run_script_has_actionable_commands "${POST_RUN_SCRIPT}"; then
+    echo "Executing deferred post-run commands from ${POST_RUN_SCRIPT}..."
+    echo "=== Deferred post-run script (sanitized) ==="
+    # Avoid leaking secrets into CI logs. Redact common token patterns if present.
+    if command -v sed >/dev/null 2>&1; then
+        sed -E \
+            -e 's#(https://x-access-token:)[^@]+@#\\1***@#g' \
+            -e 's#\\b(ghp|github_pat)_[A-Za-z0-9_]+#\\1_***#g' \
+            "${POST_RUN_SCRIPT}"
+    else
+        cat "${POST_RUN_SCRIPT}"
+    fi
+    echo "=== End deferred post-run script ==="
+    chmod +x "${POST_RUN_SCRIPT}" || true
+    bash "${POST_RUN_SCRIPT}"
+else
+    echo "Error: cursor-agent succeeded but produced no actionable deferred commands in ${POST_RUN_SCRIPT}."
+    exit 1
+fi
