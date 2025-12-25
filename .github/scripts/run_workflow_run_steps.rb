@@ -122,29 +122,40 @@ class WorkflowRunInterpreter
     log "shell=#{shell}"
     log "command=#{cmd.inspect}"
 
-    stdout_str = +""
-    stderr_str = +""
+    # IMPORTANT:
+    # Stream output in real time. The previous implementation read stdout then stderr,
+    # which can deadlock if the child writes enough data to stderr to fill the pipe.
+    # It also made CI look "stuck" because logs were only printed after the command exited.
+    $stdout.sync = true
+    $stderr.sync = true
 
     status = nil
 
     if shell.start_with?("pwsh") || shell.start_with?("powershell")
       # -Command accepts multi-line scripts fine.
-      Open3.popen3(env, "pwsh", "-NoProfile", "-NonInteractive", "-Command", cmd, chdir: workdir) do |_stdin, stdout, stderr, wait_thr|
-        stdout_str = stdout.read
-        stderr_str = stderr.read
+      Open3.popen2e(env, "pwsh", "-NoProfile", "-NonInteractive", "-Command", cmd, chdir: workdir) do |_stdin, out, wait_thr|
+        begin
+          while (chunk = out.readpartial(4096))
+            $stdout.write(chunk)
+          end
+        rescue EOFError
+          # done
+        end
         status = wait_thr.value
       end
     else
       # Use bash with strict-ish behavior. We keep it simple and let the script decide.
-      Open3.popen3(env, "bash", "-lc", cmd, chdir: workdir) do |_stdin, stdout, stderr, wait_thr|
-        stdout_str = stdout.read
-        stderr_str = stderr.read
+      Open3.popen2e(env, "bash", "-lc", cmd, chdir: workdir) do |_stdin, out, wait_thr|
+        begin
+          while (chunk = out.readpartial(4096))
+            $stdout.write(chunk)
+          end
+        rescue EOFError
+          # done
+        end
         status = wait_thr.value
       end
     end
-
-    $stdout.write(stdout_str) unless stdout_str.empty?
-    $stderr.write(stderr_str) unless stderr_str.empty?
 
     status
   end
