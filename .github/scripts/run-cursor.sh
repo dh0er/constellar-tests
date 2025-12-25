@@ -243,9 +243,15 @@ if [[ -z "$TARGET_DEFAULT_BRANCH" ]]; then
     fi
 fi
 
-PROMPT_TEMPLATE_FILE="$(dirname "${BASH_SOURCE[0]}")/../prompts/cursor-agent.md"
+# Resolve the prompt template file path relative to this script's location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROMPT_TEMPLATE_FILE="${SCRIPT_DIR}/../prompts/cursor-agent.md"
+# Resolve to absolute path
+PROMPT_TEMPLATE_FILE="$(cd "$(dirname "${PROMPT_TEMPLATE_FILE}")" && pwd)/$(basename "${PROMPT_TEMPLATE_FILE}")"
 if [[ ! -f "${PROMPT_TEMPLATE_FILE}" ]]; then
     echo "Error: cursor-agent prompt template not found: ${PROMPT_TEMPLATE_FILE}"
+    echo "Script directory: ${SCRIPT_DIR}"
+    echo "Looking for: ${SCRIPT_DIR}/../prompts/cursor-agent.md"
     exit 1
 fi
 
