@@ -134,6 +134,25 @@ fi
 # If source repository isn't provided, assume PR (if any) lives in the target repo.
 PR_REPOSITORY="$(normalize_repo_slug "${SOURCE_REPOSITORY:-${TARGET_REPOSITORY}}")"
 
+# Resolve the prompt template file path BEFORE changing directories
+# (the prompt file is in the orchestrator repo, not the target repo)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROMPT_TEMPLATE_FILE="${SCRIPT_DIR}/../prompts/cursor-agent.md"
+# Resolve to absolute path (handle .. in path)
+if command -v realpath >/dev/null 2>&1; then
+    PROMPT_TEMPLATE_FILE="$(realpath "${PROMPT_TEMPLATE_FILE}" 2>/dev/null || echo "${PROMPT_TEMPLATE_FILE}")"
+else
+    # Fallback: resolve manually by normalizing the path
+    PROMPT_TEMPLATE_FILE="$(cd "$(dirname "${PROMPT_TEMPLATE_FILE}")" 2>/dev/null && pwd)/$(basename "${PROMPT_TEMPLATE_FILE}")" || PROMPT_TEMPLATE_FILE="${SCRIPT_DIR}/../prompts/cursor-agent.md"
+fi
+if [[ ! -f "${PROMPT_TEMPLATE_FILE}" ]]; then
+    echo "Error: cursor-agent prompt template not found: ${PROMPT_TEMPLATE_FILE}"
+    echo "Script directory: ${SCRIPT_DIR}"
+    echo "Looking for: ${SCRIPT_DIR}/../prompts/cursor-agent.md"
+    echo "Current working directory: $(pwd)"
+    exit 1
+fi
+
 # Ensure we run the agent *inside* the target repository checkout.
 if [[ -n "${TARGET_WORKDIR}" ]]; then
     cd "${TARGET_WORKDIR}"
@@ -243,18 +262,7 @@ if [[ -z "$TARGET_DEFAULT_BRANCH" ]]; then
     fi
 fi
 
-# Resolve the prompt template file path relative to this script's location
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROMPT_TEMPLATE_FILE="${SCRIPT_DIR}/../prompts/cursor-agent.md"
-# Resolve to absolute path
-PROMPT_TEMPLATE_FILE="$(cd "$(dirname "${PROMPT_TEMPLATE_FILE}")" && pwd)/$(basename "${PROMPT_TEMPLATE_FILE}")"
-if [[ ! -f "${PROMPT_TEMPLATE_FILE}" ]]; then
-    echo "Error: cursor-agent prompt template not found: ${PROMPT_TEMPLATE_FILE}"
-    echo "Script directory: ${SCRIPT_DIR}"
-    echo "Looking for: ${SCRIPT_DIR}/../prompts/cursor-agent.md"
-    exit 1
-fi
-
+# Read the prompt template (path was resolved before changing directories)
 PROMPT="$(cat "${PROMPT_TEMPLATE_FILE}")"
 
 PROMPT="${PROMPT//__RUN_REPOSITORY_VALUE__/${RUN_REPOSITORY}}"
