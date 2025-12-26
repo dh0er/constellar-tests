@@ -39,10 +39,6 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
 # - That script will be executed after you exit. Treat it as your "deferred side effects" queue.
 # - The script must be safe to run once (idempotent where possible) and should assume it runs
 #   with working directory set to the TARGET repo checkout.
-# - IMPORTANT: In ALL cases, you MUST ensure POST_RUN_SCRIPT is NOT empty by appending this exact line:
-#   - `echo "cursor-agent: completed"`
-#   Do this even if you decided there are no actionable commands to defer. This marker is used to
-#   distinguish an intentional no-op from a random early exit/crash where nothing was written.
 #
 # IMPORTANT EXECUTION CONTRACT (must follow exactly):
 # - The POST_RUN_SCRIPT must contain AT MOST ONE `git push` command, and it must be the final
@@ -191,4 +187,12 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
 - If PR-associated:
   - Append commands to POST_RUN_SCRIPT to push commits and post/update a single PR comment (do not execute them during the run).
 - If not PR-associated: append commands to POST_RUN_SCRIPT to push a fix branch and open a PR (do not execute them during the run).
+
+# CRITICAL FINAL STEP (must do BEFORE exiting):
+# - AFTER you have completed ALL your work (investigating CI failures, making fixes, appending deferred commands, etc.),
+#   you MUST append this exact line to POST_RUN_SCRIPT as the very last line:
+#   - `echo "cursor-agent: completed"`
+# - This marker is REQUIRED in ALL cases (even if you have no deferred commands to append).
+# - It signals that you finished intentionally vs. crashed/exited early.
+# - Do NOT exit until you have appended this marker line.
 
