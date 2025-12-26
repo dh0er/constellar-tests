@@ -39,6 +39,10 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
 # - That script will be executed after you exit. Treat it as your "deferred side effects" queue.
 # - The script must be safe to run once (idempotent where possible) and should assume it runs
 #   with working directory set to the TARGET repo checkout.
+# - IMPORTANT: In ALL cases, you MUST ensure POST_RUN_SCRIPT is NOT empty by appending this exact line:
+#   - `echo "cursor-agent: completed"`
+#   Do this even if you decided there are no actionable commands to defer. This marker is used to
+#   distinguish an intentional no-op from a random early exit/crash where nothing was written.
 #
 # IMPORTANT EXECUTION CONTRACT (must follow exactly):
 # - The POST_RUN_SCRIPT must contain AT MOST ONE `git push` command, and it must be the final

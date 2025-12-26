@@ -306,7 +306,16 @@ post_run_script_has_actionable_commands() {
     # - a shebang
     # - set -euo pipefail
     # - export statements (we always add those)
-    grep -qvE '^\s*($|#|#!/usr/bin/env bash|set -euo pipefail|export\s+)' "${script_path}"
+    # - the required cursor-agent completion marker (added by the agent prompt)
+    grep -qvE '^\s*($|#|#!/usr/bin/env bash|set -euo pipefail|export\s+|echo\s+"cursor-agent: completed")' "${script_path}"
+}
+
+post_run_script_has_completion_marker() {
+    local script_path="${1:-}"
+    if [[ -z "${script_path}" ]] || [[ ! -f "${script_path}" ]]; then
+        return 1
+    fi
+    grep -qE '^\s*echo\s+"cursor-agent: completed"\s*$' "${script_path}"
 }
 
 run_post_run_script_if_actionable() {
@@ -410,8 +419,8 @@ cursor-agent --version 2>/dev/null || true
 # missing expected PR side effects) or hangs.
 #
 # - A hang is defined as not finishing after 30 minutes.
-# - Retry up to 3 times total (including the first attempt).
-max_attempts="${CURSOR_AGENT_MAX_ATTEMPTS:-3}"
+# - Retry up to 10 times total (including the first attempt).
+max_attempts="${CURSOR_AGENT_MAX_ATTEMPTS:-10}"
 hang_timeout_minutes="${CURSOR_AGENT_HANG_TIMEOUT_MINUTES:-30}"
 attempt=1
 sleep_seconds="${CURSOR_AGENT_RETRY_SLEEP_SECONDS:-10}"
@@ -498,6 +507,16 @@ while [[ $attempt -le $max_attempts ]]; do
 
         echo "cursor-agent exited 0 but produced no actionable commands in ${POST_RUN_SCRIPT}."
 
+        # Distinguish:
+        # - agent finished intentionally but had nothing to do (marker present)
+        # - agent exited early / crashed mid-run (marker absent)
+        if post_run_script_has_completion_marker "${POST_RUN_SCRIPT}"; then
+            echo "Detected cursor-agent completion marker, so this appears intentional (no deferred actions)."
+            echo "Failing without retrying so this is visible and not mistaken for a transient crash."
+            rm -f "$OUTPUT_FILE" || true
+            exit 1
+        fi
+
         # If this was the last attempt, fail with a clear error.
         if [[ $attempt -ge $max_attempts ]]; then
             echo "Error: cursor-agent exited successfully but produced no actionable commands on final attempt."
@@ -505,7 +524,7 @@ while [[ $attempt -le $max_attempts ]]; do
             exit 1
         fi
 
-        echo "Retrying because there are no actionable deferred commands..."
+        echo "Retrying because there are no actionable deferred commands AND no completion marker (agent likely exited early)..."
         rm -f "$OUTPUT_FILE" || true
         sleep 5
         attempt=$((attempt + 1))
