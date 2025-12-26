@@ -39,6 +39,12 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
 # - That script will be executed after you exit. Treat it as your "deferred side effects" queue.
 # - The script must be safe to run once (idempotent where possible) and should assume it runs
 #   with working directory set to the TARGET repo checkout.
+# - IMPORTANT: The post-run script header provides helper functions. Prefer using them instead of
+#   writing your own ad-hoc Python snippets. In particular, to update an existing PR/issue comment,
+#   use:
+#   - `cursor_append_issue_comment_section "<owner>/<repo>" "<comment_id>" "<markdown_file_path>"`
+#   Do NOT use `subprocess.check_call(..., input=...)` (it breaks); if you must write python, use
+#   `subprocess.run(..., input=..., check=True)` instead.
 #
 # IMPORTANT EXECUTION CONTRACT (must follow exactly):
 # - The POST_RUN_SCRIPT must contain AT MOST ONE `git push` command, and it must be the final

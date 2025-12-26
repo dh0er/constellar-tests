@@ -295,6 +295,68 @@ fi
     echo ""
 } >> "${POST_RUN_SCRIPT}"
 
+# Helper for safely updating an existing PR/issue comment by appending a section.
+# This avoids ad-hoc one-off Python snippets in POST_RUN_SCRIPT which can easily break.
+#
+# Usage (in POST_RUN_SCRIPT):
+#   tmp="$(mktemp)"; cat >"$tmp" <<'MD'
+#   ... markdown ...
+#   MD
+#   cursor_append_issue_comment_section "<owner>/<repo>" "<comment_id>" "$tmp"
+#   rm -f "$tmp"
+{
+    cat <<'SH'
+cursor_append_issue_comment_section() {
+    local pr_repository="${1:?pr_repository is required (owner/repo)}"
+    local comment_id="${2:?comment_id is required}"
+    local section_file="${3:?section_file is required}"
+
+    if [[ ! -f "${section_file}" ]]; then
+        echo "Error: section_file not found: ${section_file}" >&2
+        return 2
+    fi
+
+    # Use python3 to JSON-encode and patch the comment body safely (handles newlines).
+    python3 - "${pr_repository}" "${comment_id}" "${section_file}" <<'PY'
+import json
+import subprocess
+import sys
+
+pr_repository, comment_id, section_file = sys.argv[1], sys.argv[2], sys.argv[3]
+
+existing = json.loads(
+    subprocess.check_output(
+        ["gh", "api", f"repos/{pr_repository}/issues/comments/{comment_id}"],
+        text=True,
+    )
+)["body"]
+
+with open(section_file, "r", encoding="utf-8") as f:
+    new_section = f.read().strip()
+
+updated = existing.rstrip() + "\n\n" + new_section + "\n"
+payload = json.dumps({"body": updated})
+
+# IMPORTANT: use subprocess.run (not check_call) because we need to pass stdin via `input=...`.
+subprocess.run(
+    [
+        "gh",
+        "api",
+        "-X",
+        "PATCH",
+        f"repos/{pr_repository}/issues/comments/{comment_id}",
+        "--input",
+        "-",
+    ],
+    input=payload,
+    text=True,
+    check=True,
+)
+PY
+}
+SH
+} >> "${POST_RUN_SCRIPT}"
+
 # Returns 0 if the post-run script contains actionable commands, 1 otherwise.
 post_run_script_has_actionable_commands() {
     local script_path="${1:-}"
