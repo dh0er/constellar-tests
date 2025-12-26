@@ -33,9 +33,9 @@ jobs:
     env:
       REPO_PATH: ${{ secrets.REPO_PATH }}
       ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
-      MACOS_DEV_CERT_P12_BASE64: ${{ secrets.MACOS_DEV_CERT_P12_BASE64 }}
-      MACOS_DEV_CERT_P12_PASSWORD: ${{ secrets.MACOS_DEV_CERT_P12_PASSWORD }}
-      CI_KEYCHAIN_PASSWORD: ${{ secrets.CI_KEYCHAIN_PASSWORD }}
+      MACOS_DEV_CERT_P12_BASE64: ${{ secrets['MACOS_DEV_CERT_P12_BASE64'] }}
+      MACOS_DEV_CERT_P12_PASSWORD: ${{ secrets['MACOS_DEV_CERT_P12_PASSWORD'] }}
+      CI_KEYCHAIN_PASSWORD: ${{ secrets['CI_KEYCHAIN_PASSWORD'] }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup SSH (deploy key)
