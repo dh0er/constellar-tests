@@ -357,19 +357,38 @@ PY
 SH
 } >> "${POST_RUN_SCRIPT}"
 
+# IMPORTANT:
+# - Everything above is boilerplate/helpers and must NOT count as "actionable deferred commands".
+# - The agent must append any deferred commands below this marker.
+{
+    cat <<'SH'
+
+# === CURSOR AGENT DEFERRED COMMANDS (append below this line) ===
+SH
+} >> "${POST_RUN_SCRIPT}"
+
 # Returns 0 if the post-run script contains actionable commands, 1 otherwise.
 post_run_script_has_actionable_commands() {
     local script_path="${1:-}"
     if [[ -z "${script_path}" ]] || [[ ! -f "${script_path}" ]]; then
         return 1
     fi
-    # "Actionable" = any non-empty line that is not:
-    # - a comment
-    # - a shebang
-    # - set -euo pipefail
-    # - export statements (we always add those)
-    # - the required cursor-agent completion marker (added by the agent prompt)
-    grep -qvE '^\s*($|#|#!/usr/bin/env bash|set -euo pipefail|export\s+|echo\s+"cursor-agent: completed")' "${script_path}"
+
+    # "Actionable" means: a non-empty, non-comment line AFTER the deferred-commands marker
+    # that is not the required completion marker.
+    #
+    # This avoids counting boilerplate/header/helper function definitions as "actionable",
+    # which would otherwise cause the runner to stop retrying even when the agent appended nothing.
+    awk '
+      BEGIN { after=0; found=0 }
+      /^# === CURSOR AGENT DEFERRED COMMANDS [(]append below this line[)] ===[[:space:]]*$/ { after=1; next }
+      after==0 { next }
+      /^[[:space:]]*$/ { next }
+      /^[[:space:]]*#/ { next }
+      /^[[:space:]]*echo[[:space:]]+"cursor-agent: completed"[[:space:]]*$/ { next }
+      { found=1; exit 0 }
+      END { exit (found ? 0 : 1) }
+    ' "${script_path}"
 }
 
 post_run_script_has_completion_marker() {
