@@ -111,18 +111,16 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
        - PR_HEAD_REPO = `.head.repo.full_name`
        - HEAD_REF = `.head.ref`
        - IS_FORK = `.head.repo.fork`
+     - IMPORTANT: When tied to a PR, you MUST push fixes directly to the PR head branch (HEAD_REF). Do NOT create a new branch in this case.
      - IMPORTANT (sync before exit to avoid push rejection):
        - The PR head branch on `origin` may advance while you are running (other CI, other agents, manual updates). A workflow being triggered from a given SHA does NOT guarantee the branch ref stays unchanged.
        - Therefore, BEFORE you finish your work (still during the agent run, NOT in POST_RUN_SCRIPT), you MUST:
          - `git fetch origin "$HEAD_REF"`
-         - Rebase your local work on top of the current remote head so the deferred push will be a fast-forward:
-           - If you are pushing directly to `HEAD_REF`: `git rebase "origin/$HEAD_REF"`
-           - If you are using a separate persistent fix branch: fetch/rebase against that branch’s remote tip instead.
+         - Rebase your local work on top of the current remote head so the deferred push will be a fast-forward: `git rebase "origin/$HEAD_REF"`
          - If the rebase produces conflicts:
            - You MUST resolve them (preferred) and continue the rebase, keeping changes minimal.
            - If you cannot confidently resolve a conflict, abort (`git rebase --abort`) and STOP making further changes. In your final report, explain that the remote head advanced and requires a human conflict resolution.
-     - If HEAD_REF already starts with the Fix Branch Prefix (e.g. `ci-fix/...`), PR_HEAD_REPO equals TARGET_REPOSITORY, and IS_FORK is false, then treat HEAD_REF as the fix branch and push commits directly to it so the PR updates immediately. Do NOT create a second branch like `ci-fix/ci-fix-...` in this case.
-     - Otherwise, maintain a persistent fix branch for this HEAD_REF using the Fix Branch Prefix from Context (e.g. `${BRANCH_PREFIX}/${HEAD_REF}`), create it if missing, update it otherwise, and push changes to origin.
+     - Push commits directly to HEAD_REF so the PR updates immediately. This applies when PR_HEAD_REPO equals TARGET_REPOSITORY and IS_FORK is false. If IS_FORK is true or PR_HEAD_REPO differs from TARGET_REPOSITORY, you may not be able to push directly; in that case, document the limitation in your PR comment and explain that manual intervention is required.
    - Attempt to resolve the CI failure with minimal, targeted edits consistent with the repo's style.
    - PR comment policy:
      - Do NOT post comments during your run.
@@ -136,15 +134,13 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
        - A unique marker line EXACTLY like: `cursor-agent-run-id: __GH_RUN_ID_VALUE__`
        - Links:
          - GH_RUN_URL (workflow run): __GH_RUN_URL_VALUE__
-         - If using a separate fix branch, include a compare link to quick-create a PR
        - A note telling the reader where to find full details:
          - "Full logs and artifacts are attached to the workflow run (see GH_RUN_URL) and downloaded under RUN_ARTIFACTS_DIR in the agent run."
-     - If you pushed directly to HEAD_REF: the comment should explicitly say the PR head branch was updated.
-     - If you used a separate persistent fix branch: do NOT create a PR; instead include the compare link.
+     - The comment should explicitly say the PR head branch (HEAD_REF) was updated with the fixes.
      - Keep the comment compact (avoid pasting huge logs). If the full output would be long, include only the summary + links above.
    - Verification: during your run you may verify planned actions, but do not execute push/comment. If you add commands to POST_RUN_SCRIPT, keep them minimal and explicit.
-3) If NOT tied to a PR:
-   - Treat the TARGET default branch as the failing base. Create a fix branch from the TARGET default branch using the Fix Branch Prefix and the run id for uniqueness.
+3) If NOT tied to a PR (workflow used main/default branch):
+   - Treat the TARGET default branch as the failing base. Create a fix branch from the TARGET default branch using the Fix Branch Prefix and the run id for uniqueness (e.g. `${BRANCH_PREFIX}/main-${GH_RUN_ID}` or `${BRANCH_PREFIX}/${TARGET_DEFAULT_BRANCH}-${GH_RUN_ID}`).
    - Attempt to resolve the CI failure with minimal, targeted edits consistent with the repo's style.
    - If and only if you made a safe, actionable fix: append the commands to push the fix branch and create a PR into POST_RUN_SCRIPT (do not execute them now).
 4) If no actionable fix is possible:
