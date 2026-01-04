@@ -590,25 +590,24 @@ while [[ $attempt -le $max_attempts ]]; do
 
         echo "cursor-agent exited 0 but produced no actionable commands in ${POST_RUN_SCRIPT}."
 
-        # NOTE:
-        # The completion marker is required by the prompt, but it is NOT a reliable indicator
-        # that the agent actually performed the CI-fix task. Some failed runs only append the
-        # marker and do nothing else. Therefore: do NOT treat the marker as "intentional success".
-        # Instead, retry unless we've exhausted attempts.
-
-        # If this was the last attempt, fail with a clear error.
-        if [[ $attempt -ge $max_attempts ]]; then
-            echo "Error: cursor-agent exited successfully but produced no actionable commands on final attempt."
-            if post_run_script_has_completion_marker "${POST_RUN_SCRIPT}"; then
-                echo "Note: completion marker was present, but no deferred actions were appended."
-            else
-                echo "Note: completion marker was NOT present."
-            fi
+        # Distinguish:
+        # - agent finished intentionally but had nothing to do (marker present)
+        # - agent exited early / crashed mid-run (marker absent)
+        if post_run_script_has_completion_marker "${POST_RUN_SCRIPT}"; then
+            echo "Detected cursor-agent completion marker, so this appears intentional (no deferred actions)."
+            echo "Failing without retrying so this is visible and not mistaken for a transient crash."
             rm -f "$OUTPUT_FILE" || true
             exit 1
         fi
 
-        echo "Retrying because there are no actionable deferred commands (completion marker may or may not be present)..."
+        # If this was the last attempt, fail with a clear error.
+        if [[ $attempt -ge $max_attempts ]]; then
+            echo "Error: cursor-agent exited successfully but produced no actionable commands on final attempt."
+            rm -f "$OUTPUT_FILE" || true
+            exit 1
+        fi
+
+        echo "Retrying because there are no actionable deferred commands AND no completion marker (agent likely exited early)..."
         rm -f "$OUTPUT_FILE" || true
         sleep 5
         attempt=$((attempt + 1))
