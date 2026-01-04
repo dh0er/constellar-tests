@@ -123,6 +123,9 @@ jobs:
                   #   - the target repo (to push branches / open PRs)
                   GH_TOKEN: ${{ secrets.CURSOR_AGENT_GH_TOKEN || github.token }}
                   TARGET_GH_TOKEN: ${{ secrets.CURSOR_AGENT_GH_TOKEN || '' }}
+                  # Force HTTPS origin for pushes so we use the PAT (not the SSH deploy key).
+                  # This is required when the deploy key is read-only.
+                  CURSOR_AGENT_FORCE_HTTPS_ORIGIN: "true"
                   BRANCH_PREFIX: ci-fix
                   # Repo where the run to analyze happened.
                   # - workflow_run: this repo
