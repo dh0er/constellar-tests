@@ -410,12 +410,24 @@ run_post_run_script_if_actionable() {
     return 1
 }
 
-# If a token is provided for the target repo, prefer HTTPS auth for pushes.
-# This avoids "deploy key is read-only" failures when the clone used SSH.
+# If a token is provided for the target repo, we *can* switch origin to HTTPS auth for pushes.
+# However, pushing commits that modify workflow files under `.github/workflows/` is rejected by GitHub
+# unless the Personal Access Token has `workflow` permission/scope.
+#
+# Since this repo is typically cloned via SSH deploy key, keep the existing origin remote by default
+# and only force HTTPS token auth when explicitly requested.
 if [[ -n "${TARGET_GH_TOKEN:-}" ]]; then
     if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        # Avoid printing the token by ensuring xtrace is off (script doesn't use -x).
-        git remote set-url origin "https://x-access-token:${TARGET_GH_TOKEN}@github.com/${TARGET_OWNER}/${TARGET_REPO}.git" >/dev/null 2>&1 || true
+        ORIGIN_URL="$(git remote get-url origin 2>/dev/null || true)"
+
+        # Force HTTPS token auth only when explicitly requested, or when origin is already HTTPS.
+        # This avoids breaking workflow-file pushes when TARGET_GH_TOKEN lacks `workflow` permission.
+        if [[ "${CURSOR_AGENT_FORCE_HTTPS_ORIGIN:-}" == "true" ]] || [[ "${ORIGIN_URL}" == https://* ]]; then
+            # Avoid printing the token by ensuring xtrace is off (script doesn't use -x).
+            git remote set-url origin "https://x-access-token:${TARGET_GH_TOKEN}@github.com/${TARGET_OWNER}/${TARGET_REPO}.git" >/dev/null 2>&1 || true
+        else
+            echo "Info: Keeping SSH origin remote for pushes (set CURSOR_AGENT_FORCE_HTTPS_ORIGIN=true to force HTTPS token auth)."
+        fi
     fi
 fi
 
