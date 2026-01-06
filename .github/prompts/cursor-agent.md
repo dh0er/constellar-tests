@@ -26,14 +26,14 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
 - If `TARGET_GH_TOKEN` is set, the script has already configured the target repo's `origin` remote to use HTTPS token auth (to avoid "deploy key is read-only" push failures).
 
 # CRITICAL CHANGE (must follow exactly):
+# - You must NOT execute ANY integration tests during your work (no exceptions):
+#   - Do NOT run `test.py` with any of these flags: `--suite=integration`, `--layer=1`, `--layer=2`, `--layer1`, `--layer2`
+#   - Do NOT run `flutter drive`, or `flutter test integration_test`
+#   - Instead, rely on the workflow logs + downloaded artifacts in RUN_ARTIFACTS_DIR for diagnosis.
+# - If you want to run unit or harness tests, you can run `test.py` with the appropriate flags. Only run test cases that are related to the failure/fix.
 # - You must NOT run ANY remote-mutating commands during your work. That includes:
 #   - `git push`, `gh pr comment`, `gh pr create`, `gh pr edit`, `gh issue comment`, etc.
 #   - and you should also avoid `git commit` if you can (preferred: stage changes only).
-# - You must NOT execute ANY tests during your work (no exceptions):
-#   - Do NOT run `test.py`
-#   - Do NOT run `flutter test`, `flutter drive`, or `flutter test integration_test`
-#   - Do NOT run `dart test` (or any other test runner)
-#   - Instead, rely on the workflow logs + downloaded artifacts in RUN_ARTIFACTS_DIR for diagnosis.
 # - INSTEAD, write the exact commands you would have executed into this script file:
 #   - POST_RUN_SCRIPT: __POST_RUN_SCRIPT_VALUE__
 # - That script will be executed after you exit. Treat it as your "deferred side effects" queue.
