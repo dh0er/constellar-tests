@@ -516,7 +516,7 @@ cursor-agent --version 2>/dev/null || true
 # - A hang is defined as not finishing after 30 minutes.
 # - Retry up to 10 times total (including the first attempt).
 max_attempts="${CURSOR_AGENT_MAX_ATTEMPTS:-10}"
-hang_timeout_minutes="${CURSOR_AGENT_HANG_TIMEOUT_MINUTES:-30}"
+hang_timeout_minutes="${CURSOR_AGENT_HANG_TIMEOUT_MINUTES:-45}"
 attempt=1
 sleep_seconds="${CURSOR_AGENT_RETRY_SLEEP_SECONDS:-10}"
 

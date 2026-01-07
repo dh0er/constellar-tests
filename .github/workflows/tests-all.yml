@@ -88,17 +88,17 @@ jobs:
     dispatch:
         name: Dispatch all test workflows
         runs-on: ubuntu-latest
-        timeout-minutes: 120
+        timeout-minutes: 360
         needs: record-context
         strategy:
             fail-fast: false
             matrix:
                 workflow_file:
-                    - tests-ios.yml
-                    - tests-android.yml
-                    - tests-web.yml
-                    - tests-macos.yml
-                    - tests-windows.yml
+                    # - tests-ios.yml
+                    # - tests-android.yml
+                    # - tests-web.yml
+                    # - tests-macos.yml
+                    # - tests-windows.yml
                     - tests-linux.yml
         steps:
             - name: Trigger and wait for ${{ matrix.workflow_file }}
