@@ -399,11 +399,48 @@ post_run_script_has_completion_marker() {
     grep -qE '^\s*echo\s+"cursor-agent: completed"\s*$' "${script_path}"
 }
 
+patch_post_run_script_git_rebase_autostash() {
+    local script_path="${1:-}"
+    if [[ -z "${script_path}" ]] || [[ ! -f "${script_path}" ]]; then
+        return 0
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # Ensure deferred scripts don't fail on `git rebase ...` when the working tree is dirty.
+    # `git rebase --autostash` safely stashes unstaged changes and restores them afterwards.
+    python3 - "${script_path}" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+
+try:
+    lines = open(path, "r", encoding="utf-8").read().splitlines(True)
+except OSError:
+    sys.exit(0)
+
+out = []
+changed = False
+for line in lines:
+    m = re.match(r"^(\s*git\s+rebase)(\s+.*)$", line)
+    if m and "--autostash" not in line and "--no-autostash" not in line:
+        line = f"{m.group(1)} --autostash{m.group(2)}"
+        changed = True
+    out.append(line)
+
+if changed:
+    open(path, "w", encoding="utf-8").writelines(out)
+PY
+}
+
 run_post_run_script_if_actionable() {
     local script_path="${1:-}"
     if post_run_script_has_actionable_commands "${script_path}"; then
         echo "Detected actionable deferred commands in ${script_path}. Executing now and stopping further cursor-agent attempts."
         chmod +x "${script_path}" || true
+        patch_post_run_script_git_rebase_autostash "${script_path}" || true
         bash "${script_path}"
         return 0
     fi
@@ -705,6 +742,7 @@ if post_run_script_has_actionable_commands "${POST_RUN_SCRIPT}"; then
     fi
     echo "=== End deferred post-run script ==="
     chmod +x "${POST_RUN_SCRIPT}" || true
+    patch_post_run_script_git_rebase_autostash "${POST_RUN_SCRIPT}" || true
     bash "${POST_RUN_SCRIPT}"
 else
     echo "Error: cursor-agent succeeded but produced no actionable deferred commands in ${POST_RUN_SCRIPT}."
