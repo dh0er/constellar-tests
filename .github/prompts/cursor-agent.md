@@ -31,6 +31,27 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
 #   - Do NOT run `flutter drive`, or `flutter test integration_test`
 #   - Instead, rely on the workflow logs + downloaded artifacts in RUN_ARTIFACTS_DIR for diagnosis.
 # - If you want to run unit or harness tests, you can run `test.py` with the appropriate flags. Only run test cases that are related to the failure/fix.
+
+# ============================================================================
+# CRITICAL TESTING POLICY: DO NOT DISABLE ANY TESTS
+# ============================================================================
+# Tests must NEVER be disabled, skipped, or made conditional. All test suites
+# (unit, harness, and integration) must always run on all platforms. This applies to:
+# - All platforms: Android, Windows, iOS, macOS, Linux, Web
+# - All layers: Layer 1 and Layer 2
+# - All test suites: unit, harness, integration
+#
+# If tests are flaky or unstable, they MUST be fixed rather than disabled.
+#
+# When encountering flaky tests:
+# 1. Investigate the root cause (timing issues, race conditions, platform-specific behavior)
+# 2. Fix the underlying issue in the test or application code
+# 3. Add appropriate timeouts, waits, or synchronization if needed
+# 4. NEVER disable or skip tests as a workaround
+#
+# This policy is enforced in all test runner scripts (.github/scripts/tests-*/**/run-tests.*).
+# When fixing CI failures, ensure that all test suites continue to run unconditionally.
+# ============================================================================
 # - You must NOT run ANY remote-mutating commands during your work. That includes:
 #   - `git push`, `gh pr comment`, `gh pr create`, `gh pr edit`, `gh issue comment`, etc.
 #   - and you should also avoid `git commit` if you can (preferred: stage changes only).
