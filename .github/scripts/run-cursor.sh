@@ -435,12 +435,81 @@ if changed:
 PY
 }
 
+patch_post_run_script_git_fetch_tracking_for_rebase() {
+    local script_path="${1:-}"
+    if [[ -z "${script_path}" ]] || [[ ! -f "${script_path}" ]]; then
+        return 0
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # Some deferred scripts do:
+    #   git fetch origin "<branch>"
+    #   git rebase "origin/<branch>"
+    #
+    # But `git fetch origin <branch>` often only updates FETCH_HEAD, not refs/remotes/origin/<branch>.
+    # That can make `origin/<branch>` missing/stale and cause the rebase step to fail.
+    #
+    # Fix (minimal): when these two lines appear adjacently, rewrite the fetch to update the
+    # remote-tracking ref explicitly.
+    python3 - "${script_path}" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+
+try:
+    lines = open(path, "r", encoding="utf-8").read().splitlines(True)
+except OSError:
+    sys.exit(0)
+
+out = []
+changed = False
+i = 0
+
+fetch_re = re.compile(r'^(\s*)git\s+fetch\s+origin\s+(?:"([^"]+)"|([^\s#]+))\s*(#.*)?\n?$')
+rebase_re = re.compile(r'^(\s*)git\s+rebase(\s+.*)?\s+(?:"?origin/([^"\s#]+)"?)\s*(#.*)?\n?$')
+
+while i < len(lines):
+    line = lines[i]
+    m_fetch = fetch_re.match(line)
+    if m_fetch and i + 1 < len(lines):
+        next_line = lines[i + 1]
+        m_rebase = rebase_re.match(next_line)
+        if m_rebase:
+            indent = m_fetch.group(1) or ""
+            branch = m_fetch.group(2) or m_fetch.group(3) or ""
+            rebase_branch = m_rebase.group(3) or ""
+
+            if branch and branch == rebase_branch:
+                # Preserve any trailing comment on the fetch line.
+                trailing = m_fetch.group(4) or ""
+                rewritten = f'{indent}git fetch origin "{branch}:refs/remotes/origin/{branch}"'
+                if trailing:
+                    rewritten += f" {trailing.strip()}"
+                rewritten += "\n"
+                out.append(rewritten)
+                out.append(next_line)
+                changed = True
+                i += 2
+                continue
+
+    out.append(line)
+    i += 1
+
+if changed:
+    open(path, "w", encoding="utf-8").writelines(out)
+PY
+}
+
 run_post_run_script_if_actionable() {
     local script_path="${1:-}"
     if post_run_script_has_actionable_commands "${script_path}"; then
         echo "Detected actionable deferred commands in ${script_path}. Executing now and stopping further cursor-agent attempts."
         chmod +x "${script_path}" || true
         patch_post_run_script_git_rebase_autostash "${script_path}" || true
+        patch_post_run_script_git_fetch_tracking_for_rebase "${script_path}" || true
         bash "${script_path}"
         return 0
     fi
@@ -743,6 +812,7 @@ if post_run_script_has_actionable_commands "${POST_RUN_SCRIPT}"; then
     echo "=== End deferred post-run script ==="
     chmod +x "${POST_RUN_SCRIPT}" || true
     patch_post_run_script_git_rebase_autostash "${POST_RUN_SCRIPT}" || true
+    patch_post_run_script_git_fetch_tracking_for_rebase "${POST_RUN_SCRIPT}" || true
     bash "${POST_RUN_SCRIPT}"
 else
     echo "Error: cursor-agent succeeded but produced no actionable deferred commands in ${POST_RUN_SCRIPT}."
