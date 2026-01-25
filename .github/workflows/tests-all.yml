@@ -8,7 +8,7 @@ on:
                 required: false
                 default: ""
             source_repo:
-                description: "Source repo that triggered this workflow (e.g. dh0er/astrologs)"
+                description: "Source repo that triggered this workflow"
                 required: false
                 default: ""
             source_ref:

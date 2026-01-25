@@ -6,7 +6,7 @@ alwaysApply: true
 
 Rule 1: Whenever you see something unusual or strange in my code, stop immediately and ask me instead of making your own conclusions.
 Rule 2: After fixing an issue, the first thing to answer is always a detailed explanation about the root cause of the issue, in plaintext.
-Rule 3: Always try to do code changes as much as necessary but as least as possible.
+Rule 3: If you think it would be good to rewrite larger parts of code, stop and ask me for approval first.
 Rule 4: Comply to existing patterns when you write code, but be reasonable. If you think the patterns are somehow bad practice or in any way not the best approach, stop and ask me how you should proceed.
 Rule 5: Never remove any comments, unless you also want to remove the code on which the comment is based.
 Rule 6: Respect my architecture and layers.
