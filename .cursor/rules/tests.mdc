@@ -1,0 +1,9 @@
+---
+description: Rules for test enablement
+globs:
+alwaysApply: true
+---
+
+Rule 1: NEVER enable, disable, skip, unskip, comment out, uncomment, or otherwise change the enablement status of any test suite, test case, or test runner script. If a test is disabled, it was disabled intentionally. If a test is enabled and flaky, fix the test — do not disable it.
+Rule 2: NEVER modify CI scripts (.github/scripts/tests-*/**/run-tests.*) or workflow YAML files to change which tests run or on which platforms they run.
+Rule 3: The set of tests that run is NEVER the agent's decision. Always leave test enablement as-is.
