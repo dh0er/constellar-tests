@@ -93,14 +93,39 @@ def _summarize_tool_call(obj: dict) -> str | None:
 def main() -> int:
     in_thinking = False
     last_session_id: str | None = None
+    last_was_tool_call = False
+    has_output = False
 
     def end_thinking_if_needed() -> None:
-        nonlocal in_thinking, last_session_id
+        nonlocal in_thinking, last_session_id, has_output, last_was_tool_call
         if in_thinking:
             sys.stdout.write("\n")
             sys.stdout.flush()
             in_thinking = False
             last_session_id = None
+            has_output = True
+            last_was_tool_call = False
+
+    def _mark_output(is_tool: bool) -> None:
+        """Insert blank line at tool / non-tool boundaries."""
+        nonlocal last_was_tool_call, has_output
+        if has_output and is_tool != last_was_tool_call:
+            sys.stdout.write("\n")
+        last_was_tool_call = is_tool
+        has_output = True
+
+    def _transform_text(text: str) -> str:
+        """Replace lone EOF lines with blanks; add blank line before '**' headings."""
+        lines = text.split("\n")
+        result: list[str] = []
+        for line in lines:
+            if line == "EOF":
+                result.append("")
+            else:
+                if line.startswith("**") and result:
+                    result.append("")
+                result.append(line)
+        return "\n".join(result)
 
     for raw in sys.stdin:
         line = raw.rstrip("\n")
@@ -134,6 +159,8 @@ def main() -> int:
                         sys.stdout.write("\n")
                         in_thinking = False
                     sys.stdout.flush()
+                    has_output = True
+                    last_was_tool_call = False
                     continue
 
             # Hide the thinking "completed" JSON line; just end the stitched block.
@@ -146,7 +173,8 @@ def main() -> int:
                 end_thinking_if_needed()
                 text = _extract_assistant_text(obj)
                 if isinstance(text, str) and text:
-                    sys.stdout.write(text)
+                    _mark_output(is_tool=False)
+                    sys.stdout.write(_transform_text(text))
                     if not text.endswith("\n"):
                         sys.stdout.write("\n")
                     sys.stdout.flush()
@@ -158,10 +186,12 @@ def main() -> int:
                 end_thinking_if_needed()
                 summary = _summarize_tool_call(obj)
                 if subtype == "started":
+                    _mark_output(is_tool=True)
                     sys.stdout.write(f"{summary} (started)\n")
                     sys.stdout.flush()
                     continue
                 if subtype == "completed":
+                    _mark_output(is_tool=True)
                     sys.stdout.write(f"{summary} (completed)\n")
                     sys.stdout.flush()
                     continue
@@ -171,7 +201,8 @@ def main() -> int:
                 end_thinking_if_needed()
                 result = obj.get("result")
                 if isinstance(result, str) and result:
-                    sys.stdout.write(result)
+                    _mark_output(is_tool=False)
+                    sys.stdout.write(_transform_text(result))
                     if not result.endswith("\n"):
                         sys.stdout.write("\n")
                     sys.stdout.flush()
@@ -185,6 +216,7 @@ def main() -> int:
             # Unknown JSON event: print a minimal summary instead of full JSON.
             end_thinking_if_needed()
             if isinstance(typ, str):
+                _mark_output(is_tool=False)
                 if isinstance(subtype, str) and subtype:
                     sys.stdout.write(f"[{typ}:{subtype}]\n")
                 else:
@@ -192,7 +224,11 @@ def main() -> int:
                 sys.stdout.flush()
                 continue
 
-        sys.stdout.write(raw)
+        _mark_output(is_tool=False)
+        transformed = _transform_text(line)
+        sys.stdout.write(transformed)
+        if raw.endswith("\n"):
+            sys.stdout.write("\n")
         sys.stdout.flush()
 
     # Ensure we don't leave the prompt stuck on the same line.
