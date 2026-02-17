@@ -115,7 +115,7 @@ jobs:
             - name: Fix CI failure
               env:
                   CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-                  MODEL: opus-4.6-max
+                  MODEL: opus-4.6-thinking
                   # IMPORTANT:
                   # - `github.token` / `secrets.GITHUB_TOKEN` often cannot access a *different* private target repo (it will 404).
                   # - Provide a fine-grained PAT (or GitHub App token) with access to BOTH:
