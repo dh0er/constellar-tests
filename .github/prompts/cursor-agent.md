@@ -72,6 +72,37 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
 # document it and report it -- do NOT attempt to fix the UI code yourself.
 # ============================================================================
 
+# ============================================================================
+# LAYOUT-AWARE TEST CHANGES (must follow when modifying test code)
+# ============================================================================
+# The app has significantly different UI flows on desktop vs mobile layouts.
+# When modifying ANY test code (integration_test/**), you MUST account for
+# both layouts:
+#
+# - Desktop (width ≥ 800): three-panel layout; horoscope list and chart are
+#   visible simultaneously; selecting a horoscope does NOT navigate to /chart;
+#   chart settings panels appear in the right rail.
+# - Mobile (width < 800): single-panel layout; selecting a horoscope navigates
+#   to /chart via GoRouter; the horoscope list is NOT visible while the chart
+#   is displayed; chart navigation uses a bottom bar.
+#
+# Consult `integration_test/layout_behavior.md` in the TARGET repo for the
+# full reference (breakpoints, navigation flow, widget visibility per layout,
+# viewport helpers, and common testing pitfalls such as route assertions,
+# widget counts, keyboard dismissal, provider state polling, etc.).
+#
+# Key rules when writing/changing tests:
+# - Use `configureTestViewport` / `resetTestViewport` from viewport_helper.dart
+#   (never set physicalSize / devicePixelRatio manually).
+# - Do NOT assert on GoRouter route location to detect chart display — use
+#   widget finders (e.g. `find.byKey(TChartViewTitle.chartViewTitleKey)`).
+# - Use `findsWidgets` (plural) when text could appear in multiple panels on
+#   desktop; use `findsOneWidget` only when truly unique across layouts.
+# - Use `harness.pumpAndWait()` instead of `tester.pumpAndSettle()` for chart
+#   settings interactions.
+# - Dismiss the keyboard before tapping buttons that may be occluded on mobile.
+# ============================================================================
+
 # - You must NOT run ANY remote-mutating commands during your work. That includes:
 #   - `git push`, `gh pr comment`, `gh pr create`, `gh pr edit`, `gh issue comment`, etc.
 #   - and you should also avoid `git commit` if you can (preferred: stage changes only).
