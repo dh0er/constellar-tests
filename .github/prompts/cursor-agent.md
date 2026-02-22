@@ -55,6 +55,23 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
 #
 # In short: the set of tests that run is NEVER your decision. Leave it as-is.
 # ============================================================================
+
+# ============================================================================
+# CRITICAL UI POLICY: NEVER CHANGE UI / LAYOUT CODE
+# ============================================================================
+# You must NEVER modify any UI, layout, or widget code in the application.
+# Under NO CIRCUMSTANCES may you change:
+# - Widget build() methods, widget trees, or layout structures
+# - Navigation components (rails, bars, drawers, app bars, etc.)
+# - Styling, theming, design, or visual appearance
+# - Any file under lib/ui/, or any *.widget.dart file
+# - Any widget class anywhere in lib/
+#
+# Your job is strictly limited to fixing CI infrastructure, test code, and
+# build/tooling issues. If a test failure appears to be caused by a UI bug,
+# document it and report it -- do NOT attempt to fix the UI code yourself.
+# ============================================================================
+
 # - You must NOT run ANY remote-mutating commands during your work. That includes:
 #   - `git push`, `gh pr comment`, `gh pr create`, `gh pr edit`, `gh issue comment`, etc.
 #   - and you should also avoid `git commit` if you can (preferred: stage changes only).
@@ -75,6 +92,8 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
 #   remote-mutating action (to avoid triggering multiple overlapping CI runs for the same PR).
 # - If you need multiple commits, that's OK, but push them together once at the very end.
 # - Do not "push a first attempt" and then "push a refinement" in the same agent run.
+# - NEVER commit the post-run script itself (POST_RUN_SCRIPT / .cursor-agent-post-run.sh).
+#   It is an ephemeral automation artifact and must NOT appear in any git commit.
 
 # Context (values)
 - RUN_REPOSITORY: __RUN_REPOSITORY_VALUE__
