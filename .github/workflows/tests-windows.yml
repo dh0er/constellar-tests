@@ -29,7 +29,7 @@ jobs:
   test:
     name: Run tests on Windows
     runs-on: windows-latest
-    timeout-minutes: 360
+    timeout-minutes: 180
     env:
       REPO_PATH: ${{ secrets.REPO_PATH }}
       ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
