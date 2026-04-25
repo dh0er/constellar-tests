@@ -28,7 +28,7 @@ concurrency:
 jobs:
   test:
     name: Run tests on macOS
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 180
     env:
       REPO_PATH: ${{ secrets.REPO_PATH }}
@@ -65,9 +65,14 @@ jobs:
           git rev-parse HEAD
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.38.1"
+          flutter-version: "3.41.2"
           channel: "stable"
           cache: true
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"

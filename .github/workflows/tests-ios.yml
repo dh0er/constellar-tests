@@ -28,11 +28,12 @@ concurrency:
 jobs:
   test:
     name: Run tests on iOS Simulator
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 180
     env:
       REPO_PATH: ${{ secrets.REPO_PATH }}
       ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
+      IOS_MAX_RUNTIME_MAJOR: "26"
     steps:
       - uses: actions/checkout@v4
       - name: Setup SSH (deploy key)
@@ -68,9 +69,14 @@ jobs:
           python-version: "3.11"
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.38.1"
+          flutter-version: "3.41.2"
           channel: "stable"
           cache: true
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
