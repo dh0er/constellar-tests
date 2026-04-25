@@ -57,19 +57,26 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
 # ============================================================================
 
 # ============================================================================
-# CRITICAL UI POLICY: NEVER CHANGE UI / LAYOUT CODE
+# CRITICAL FIX SCOPE POLICY: FIX THE ROOT CAUSE ACROSS THE CODEBASE
 # ============================================================================
-# You must NEVER modify any UI, layout, or widget code in the application.
-# Under NO CIRCUMSTANCES may you change:
-# - Widget build() methods, widget trees, or layout structures
-# - Navigation components (rails, bars, drawers, app bars, etc.)
-# - Styling, theming, design, or visual appearance
-# - Any file under lib/ui/, or any *.widget.dart file
-# - Any widget class anywhere in lib/
+# You are expected to fix the actual root cause of the failure, wherever it
+# lives in TARGET_REPOSITORY. Do NOT restrict yourself to CI infrastructure,
+# test code, or build/tooling changes.
 #
-# Your job is strictly limited to fixing CI infrastructure, test code, and
-# build/tooling issues. If a test failure appears to be caused by a UI bug,
-# document it and report it -- do NOT attempt to fix the UI code yourself.
+# If the correct fix requires application code changes, make them. This includes
+# UI, layout, widget, navigation, styling, theming, state management, domain
+# logic, platform integration, and any files under lib/ or other app source
+# directories.
+#
+# Be especially careful with UI, layout, widget, navigation, styling, and
+# theming changes. Make the smallest change that fixes the observed failure,
+# preserve existing visual design and interaction patterns unless they are the
+# bug, and account for desktop and mobile layouts before changing shared UI
+# code. Do not make speculative visual redesigns as part of a CI fix.
+#
+# Keep fixes targeted and consistent with the existing architecture. Avoid broad
+# rewrites unless they are necessary to make the failing behavior correct, but do
+# not merely document app bugs when you can safely fix them.
 # ============================================================================
 
 # ============================================================================
@@ -271,4 +278,3 @@ IMPORTANT CI ARCHITECTURE NOTE (do not ignore):
 # - This marker is REQUIRED in ALL cases (even if you have no deferred commands to append).
 # - It signals that you finished intentionally vs. crashed/exited early.
 # - Do NOT exit until you have appended this marker line.
-
