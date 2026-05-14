@@ -30,13 +30,14 @@ permissions:
 
 jobs:
     attempt-fix:
-        if: >-
-            ${{
-              (github.event_name == 'workflow_run' &&
-                github.event.workflow_run.conclusion == 'failure' &&
-                github.event.workflow_run.name != 'Fix CI Failures') ||
-              (github.event_name == 'workflow_dispatch')
-            }}
+        # Temporarily disabled. Restore the previous condition when re-enabling:
+        # ${{
+        #   (github.event_name == 'workflow_run' &&
+        #     github.event.workflow_run.conclusion == 'failure' &&
+        #     github.event.workflow_run.name != 'Fix CI Failures') ||
+        #   (github.event_name == 'workflow_dispatch')
+        # }}
+        if: ${{ false }}
         runs-on: ubuntu-latest
         timeout-minutes: 360
         steps:
