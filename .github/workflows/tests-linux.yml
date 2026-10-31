@@ -63,9 +63,18 @@ jobs:
           fi
           echo "Checked out commit:"
           git rev-parse HEAD
+      - name: Read pinned Flutter version from source repo
+        id: flutter-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < repo/.flutter-version)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid Flutter pin: $version" >&2; exit 1; }
+          echo "Using Flutter $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.41.2"
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: "stable"
           cache: true
       - uses: supabase/setup-cli@v1
