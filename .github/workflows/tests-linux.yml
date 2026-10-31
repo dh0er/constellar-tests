@@ -77,9 +77,20 @@ jobs:
           flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: "stable"
           cache: true
+      - name: Read pinned Supabase CLI version from source repo
+        id: supabase-cli-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The interpreter skips `uses:` steps of the source workflow, so read
+          # the CLI pin it declares for supabase/setup-cli and install that.
+          version="$(awk '/supabase\/setup-cli@/{found=1} found && /version:/{print $2; exit}' repo/.github/workflows/tests-linux.yml | tr -d '"\r')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid Supabase CLI pin: '$version'" >&2; exit 1; }
+          echo "Using Supabase CLI $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: ${{ steps.supabase-cli-version.outputs.version }}
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
