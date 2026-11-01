@@ -68,8 +68,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(tr -d '\r\n' < repo/.flutter-version)"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid Flutter pin: $version" >&2; exit 1; }
+          if [[ -f repo/.flutter-version ]]; then
+            version="$(tr -d '\r\n' < repo/.flutter-version)"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid Flutter pin: $version" >&2; exit 1; }
+          else
+            # Source refs from before the pin (e.g. main) keep the previous toolchain.
+            version="3.41.2"
+            echo "No .flutter-version in the source repo; falling back to Flutter $version"
+          fi
           echo "Using Flutter $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: subosito/flutter-action@v2
@@ -85,7 +91,11 @@ jobs:
           # The interpreter skips `uses:` steps of the source workflow, so read
           # the CLI pin it declares for supabase/setup-cli and install that.
           version="$(awk '/supabase\/setup-cli@/{found=1} found && /version:/{print $2; exit}' repo/.github/workflows/tests-linux.yml | tr -d '"\r')"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid Supabase CLI pin: '$version'" >&2; exit 1; }
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            # Source refs from before the pin declare `latest` (or nothing); keep that.
+            echo "No exact Supabase CLI pin in the source workflow ('$version'); using '${version:-latest}'"
+            version="${version:-latest}"
+          fi
           echo "Using Supabase CLI $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: supabase/setup-cli@v1
