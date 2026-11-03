@@ -169,7 +169,9 @@ jobs:
                       }
 
                       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-                      const deadlineMs = dispatchStartedAtMs + (170 * 60 * 1000);
+                      // Longer than the slowest child job's own limit (iOS 330 min),
+                      // so a child that finishes in time is never reported as timed out.
+                      const deadlineMs = dispatchStartedAtMs + (340 * 60 * 1000);
                       const createdAfter = new Date(dispatchStartedAtMs - 60_000);
 
                       // Find the workflow run that was created by the dispatch.
