@@ -27,12 +27,18 @@ concurrency:
 
 jobs:
   test:
-    name: Run tests on Windows
+    name: Run tests on Windows (shard ${{ matrix.shard }})
     runs-on: windows-latest
     timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
     env:
       REPO_PATH: ${{ secrets.REPO_PATH }}
       ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
+      TEST_SHARD_INDEX: ${{ matrix.shard }}
+      TEST_SHARD_TOTAL: "2"
     steps:
       - uses: actions/checkout@v4
       - name: Setup SSH (deploy key)
@@ -64,10 +70,31 @@ jobs:
           }
           Write-Host "Checked out commit:"
           git rev-parse HEAD
+      - name: Check integration sharding support in source repo
+        id: shard-support
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q "TEST_SHARD_INDEX" repo/test.py 2>/dev/null; then
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+            echo "run_shard=true" >> "$GITHUB_OUTPUT"
+            echo "Source repo supports integration sharding (shard ${{ matrix.shard }}/${{ env.TEST_SHARD_TOTAL }})."
+          else
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            if [[ "${{ matrix.shard }}" == "0" ]]; then
+              echo "run_shard=true" >> "$GITHUB_OUTPUT"
+              echo "Source repo lacks sharding support; shard 0 will run the full suite."
+            else
+              echo "run_shard=false" >> "$GITHUB_OUTPUT"
+              echo "Source repo lacks sharding support; shard ${{ matrix.shard }} exiting early."
+            fi
+          fi
       - uses: actions/setup-python@v5
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:
           python-version: "3.11"
       - name: Read pinned Flutter version from source repo
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         id: flutter-version
         shell: bash
         run: |
@@ -83,19 +110,22 @@ jobs:
           echo "Using Flutter $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: subosito/flutter-action@v2
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:
           flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: "stable"
           cache: true
       - uses: ruby/setup-ruby@v1
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:
           ruby-version: "3.3"
       - name: Run interpreter (execute 'run' steps from cloned workflow)
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         shell: pwsh
         run: ruby .github/scripts/run_workflow_run_steps.rb --workflow repo/.github/workflows/tests-windows.yml --job layer1-tests --default-working-directory repo
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: ${{ failure() && steps.shard-support.outputs.run_shard == 'true' }}
         with:
-          name: layer1-screenshots-windows
+          name: layer1-screenshots-windows-shard-${{ matrix.shard }}
           path: repo/integration_test/screenshots/
           if-no-files-found: ignore
