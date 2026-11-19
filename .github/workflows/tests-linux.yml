@@ -27,12 +27,39 @@ concurrency:
 
 jobs:
   test:
-    name: Run tests on Linux
+    name: Run tests on Linux (${{ matrix.label }})
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: "vps-contract"
+            artifact_suffix: "vps-contract"
+            role: "vps-contract"
+            shard: "0"
+          - label: "host"
+            artifact_suffix: "host"
+            role: "host"
+            shard: "0"
+          - label: "shard 0"
+            artifact_suffix: "shard-0"
+            role: "integration"
+            shard: "0"
+          - label: "shard 1"
+            artifact_suffix: "shard-1"
+            role: "integration"
+            shard: "1"
+          - label: "shard 2"
+            artifact_suffix: "shard-2"
+            role: "integration"
+            shard: "2"
     env:
       REPO_PATH: ${{ secrets.REPO_PATH }}
       ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
+      TEST_RUNNER_ROLE: ${{ matrix.role }}
+      TEST_SHARD_INDEX: ${{ matrix.shard }}
+      TEST_SHARD_TOTAL: "3"
     steps:
       - uses: actions/checkout@v4
       - name: Setup SSH (deploy key)
@@ -63,7 +90,60 @@ jobs:
           fi
           echo "Checked out commit:"
           git rev-parse HEAD
+      - name: Check integration sharding support in source repo
+        id: shard-support
+        shell: bash
+        run: |
+          set -euo pipefail
+          HAS_SHARDING=0
+          HAS_ROLE=0
+          HAS_VPS_ROLE=0
+          if grep -q "TEST_SHARD_INDEX" repo/test.py 2>/dev/null; then
+            HAS_SHARDING=1
+          fi
+          if grep -q "TEST_RUNNER_ROLE" repo/.github/scripts/tests-linux/layer2-tests/run-tests.sh 2>/dev/null; then
+            HAS_ROLE=1
+          fi
+          if grep -q "vps-contract)" repo/.github/scripts/tests-linux/layer2-tests/run-tests.sh 2>/dev/null; then
+            HAS_VPS_ROLE=1
+          fi
+
+          if [[ "${{ matrix.role }}" == "vps-contract" ]]; then
+            if [[ "$HAS_VPS_ROLE" == "1" ]]; then
+              echo "supported=true" >> "$GITHUB_OUTPUT"
+              echo "run_shard=true" >> "$GITHUB_OUTPUT"
+              echo "Source repo supports TEST_RUNNER_ROLE=vps-contract split."
+            else
+              echo "supported=false" >> "$GITHUB_OUTPUT"
+              echo "run_shard=false" >> "$GITHUB_OUTPUT"
+              echo "Source repo lacks vps-contract role split; host/shard 0 covers it."
+            fi
+          elif [[ "${{ matrix.role }}" == "host" ]]; then
+            if [[ "$HAS_ROLE" == "1" ]]; then
+              echo "supported=true" >> "$GITHUB_OUTPUT"
+              echo "run_shard=true" >> "$GITHUB_OUTPUT"
+              echo "Source repo supports TEST_RUNNER_ROLE=host split."
+            else
+              echo "supported=false" >> "$GITHUB_OUTPUT"
+              echo "run_shard=false" >> "$GITHUB_OUTPUT"
+              echo "Source repo lacks TEST_RUNNER_ROLE split; shard 0 covers host suites."
+            fi
+          elif [[ "$HAS_SHARDING" == "1" ]]; then
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+            echo "run_shard=true" >> "$GITHUB_OUTPUT"
+            echo "Source repo supports integration sharding (role=${{ matrix.role }}, shard ${{ matrix.shard }}/${{ env.TEST_SHARD_TOTAL }})."
+          else
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            if [[ "${{ matrix.shard }}" == "0" ]]; then
+              echo "run_shard=true" >> "$GITHUB_OUTPUT"
+              echo "Source repo lacks sharding support; shard 0 will run the full suite."
+            else
+              echo "run_shard=false" >> "$GITHUB_OUTPUT"
+              echo "Source repo lacks sharding support; shard ${{ matrix.shard }} exiting early."
+            fi
+          fi
       - name: Read pinned Flutter version from source repo
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         id: flutter-version
         shell: bash
         run: |
@@ -79,11 +159,13 @@ jobs:
           echo "Using Flutter $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: subosito/flutter-action@v2
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:
           flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: "stable"
           cache: true
       - name: Read pinned Supabase CLI version from source repo
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         id: supabase-cli-version
         shell: bash
         run: |
@@ -99,16 +181,19 @@ jobs:
           echo "Using Supabase CLI $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: supabase/setup-cli@v1
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:
           version: ${{ steps.supabase-cli-version.outputs.version }}
       - uses: ruby/setup-ruby@v1
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:
           ruby-version: "3.3"
       - name: Run interpreter (execute 'run' steps from cloned workflow)
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         run: ruby .github/scripts/run_workflow_run_steps.rb --workflow repo/.github/workflows/tests-linux.yml --job layer2-tests --default-working-directory repo
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: ${{ failure() && steps.shard-support.outputs.run_shard == 'true' }}
         with:
-          name: layer2-screenshots-linux
+          name: layer2-screenshots-linux-${{ matrix.artifact_suffix }}
           path: repo/integration_test/screenshots/
           if-no-files-found: ignore

@@ -34,80 +34,30 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
-    record-context:
-        name: Record cursor-agent context
-        runs-on: ubuntu-latest
-        timeout-minutes: 5
-        steps:
-            - name: Record source context (for cursor-agent)
-              id: record_source_context
-              shell: bash
-              run: |
-                  set -euo pipefail
-
-                  source_repo="${{ inputs.source_repo }}"
-                  source_ref="${{ inputs.source_ref }}"
-                  source_sha="${{ inputs.source_sha }}"
-                  source_pr="${{ inputs.source_pr }}"
-
-                  # Derive PR number from a refs/pull/<n>/... ref when not explicitly provided.
-                  if [[ -z "${source_pr}" ]] && [[ "${source_ref}" =~ ^refs/pull/([0-9]+)/ ]]; then
-                    source_pr="${BASH_REMATCH[1]}"
-                  fi
-
-                  mkdir -p cursor-agent-context
-                  cat > cursor-agent-context/source_context.json <<EOF
-                  {
-                    "source_repo": "${source_repo}",
-                    "source_ref": "${source_ref}",
-                    "source_sha": "${source_sha}",
-                    "source_pr": "${source_pr}",
-                    "tests_repo": "${{ github.repository }}",
-                    "tests_run_id": "${{ github.run_id }}",
-                    "tests_run_attempt": "${{ github.run_attempt }}",
-                    "tests_run_number": "${{ github.run_number }}",
-                    "tests_workflow": "${{ github.workflow }}",
-                    "tests_ref": "${{ github.ref }}",
-                    "tests_sha": "${{ github.sha }}",
-                    "actor": "${{ github.actor }}",
-                    "event_name": "${{ github.event_name }}"
-                  }
-                  EOF
-
-                  echo "Wrote cursor-agent source context:"
-                  cat cursor-agent-context/source_context.json
-
-            - name: Upload source context artifact (for cursor-agent)
-              if: ${{ always() }}
-              uses: actions/upload-artifact@v4
-              with:
-                  name: cursor-agent-context
-                  path: cursor-agent-context/source_context.json
-                  if-no-files-found: error
-
     dispatch:
-        name: Dispatch all test workflows
+        name: Dispatch and monitor all test workflows
         runs-on: ubuntu-latest
-        timeout-minutes: 360
-        needs: record-context
-        strategy:
-            fail-fast: false
-            matrix:
-                workflow_file:
-                    - tests-ios.yml
-                    - tests-android.yml
-                    - tests-web.yml
-                    - tests-macos.yml
-                    - tests-windows.yml
-                    - tests-linux.yml
+        timeout-minutes: 240
         steps:
-            - name: Trigger and wait for ${{ matrix.workflow_file }}
+            - name: Trigger and wait for all platform test workflows
               id: dispatch_and_wait
               uses: actions/github-script@v7
               with:
                   github-token: ${{ secrets.GITHUB_TOKEN }}
                   script: |
-                      const workflow_id = "${{ matrix.workflow_file }}";
+                      const fs = require("fs");
+
+                      // Dispatch slowest/macOS-limited workflows first so they claim
+                      // runner capacity immediately without waiting behind faster jobs.
+                      const workflowFiles = [
+                        "tests-ios.yml",
+                        "tests-macos.yml",
+                        "tests-android.yml",
+                        "tests-linux.yml",
+                        "tests-windows.yml",
+                        "tests-web.yml",
+                      ];
+
                       const refInput = "${{ inputs.ref }}".trim();
                       const ref = refInput || context.ref.replace(/^refs\/(heads|tags)\//, "");
                       const sourceRepoInput = "${{ inputs.source_repo }}".trim();
@@ -123,7 +73,7 @@ jobs:
                       const dispatchStartedAtMs = Date.now();
                       // Resolve the requested ref to an immutable commit SHA so:
                       // - all dispatched workflows run the exact same commit
-                      // - we can reliably discover the created workflow run via head_sha
+                      // - we can reliably discover the created workflow runs via head_sha
                       let targetSha = context.sha;
                       if (refInput) {
                         const commit = await github.rest.repos.getCommit({
@@ -134,12 +84,7 @@ jobs:
                         targetSha = commit.data.sha;
                       }
 
-                      // Don't call `users.getAuthenticated()` here: `GITHUB_TOKEN` (integration token)
-                      // cannot access GET /user and will fail with "Resource not accessible by integration".
                       const tokenUser = process.env.GITHUB_ACTOR;
-
-                      core.info(`Dispatching ${workflow_id} on ref=${ref} (targetSha=${targetSha}, actor=${tokenUser})`);
-
                       const dispatchInputs = {
                         ...(sourceRepoInput ? { source_repo: sourceRepoInput } : {}),
                         ...(sourceRefInput ? { source_ref: sourceRefInput } : {}),
@@ -147,267 +92,230 @@ jobs:
                         ...(sourcePrInput ? { source_pr: sourcePrInput } : {}),
                       };
 
-                      // Try to pin the dispatched workflow run to an immutable SHA. If GitHub rejects
-                      // the SHA for `ref`, fall back to the branch/tag `ref`.
-                      try {
-                        await github.rest.actions.createWorkflowDispatch({
-                          owner: context.repo.owner,
-                          repo: context.repo.repo,
-                          workflow_id,
-                          ref: targetSha,
-                          inputs: dispatchInputs,
-                        });
-                      } catch (e) {
-                        core.warning(`Dispatch with ref=SHA failed for ${workflow_id}; falling back to ref=${ref}. Error: ${e?.message ?? e}`);
-                        await github.rest.actions.createWorkflowDispatch({
-                          owner: context.repo.owner,
-                          repo: context.repo.repo,
-                          workflow_id,
-                          ref,
-                          inputs: dispatchInputs,
-                        });
-                      }
-
                       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-                      // Longer than the slowest child job's own limit (iOS 330 min),
-                      // so a child that finishes in time is never reported as timed out.
-                      const deadlineMs = dispatchStartedAtMs + (340 * 60 * 1000);
+                      const deadlineMs = dispatchStartedAtMs + (220 * 60 * 1000);
                       const createdAfter = new Date(dispatchStartedAtMs - 60_000);
 
-                      // Find the workflow run that was created by the dispatch.
-                      // Note: createWorkflowDispatch does not return the run_id, so we discover it by:
-                      // - workflow file name (workflow_id)
-                      // - event=workflow_dispatch
-                      // - head_sha matches the resolved targetSha (preferred) / head_branch matches ref (fallback)
-                      // - created_at after we dispatched (with small slack)
-                      // - triggering_actor/actor matches the token user
-                      let run = null;
-                      while (!run && Date.now() < deadlineMs) {
-                        const runs = await github.rest.actions.listWorkflowRuns({
-                          owner: context.repo.owner,
-                          repo: context.repo.repo,
-                          workflow_id,
-                          event: "workflow_dispatch",
-                          per_page: 50,
-                        });
+                      const states = workflowFiles.map((workflow_id) => ({
+                        workflow_file: workflow_id,
+                        ref,
+                        target_sha: targetSha,
+                        run_id: "",
+                        run_url: "",
+                        status: "pending",
+                        conclusion: "",
+                      }));
 
-                        const all = (runs.data.workflow_runs || [])
-                          .filter((r) => r && new Date(r.created_at) >= createdAfter)
-                          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+                      // 1) Dispatch all 6 workflows sequentially in order (takes ~2s total).
+                      for (const st of states) {
+                        core.info(`Dispatching ${st.workflow_file} on ref=${ref} (targetSha=${targetSha}, actor=${tokenUser})`);
+                        try {
+                          await github.rest.actions.createWorkflowDispatch({
+                            owner: context.repo.owner,
+                            repo: context.repo.repo,
+                            workflow_id: st.workflow_file,
+                            ref: targetSha,
+                            inputs: dispatchInputs,
+                          });
+                        } catch (e) {
+                          core.warning(`Dispatch with ref=SHA failed for ${st.workflow_file}; falling back to ref=${ref}. Error: ${e?.message ?? e}`);
+                          await github.rest.actions.createWorkflowDispatch({
+                            owner: context.repo.owner,
+                            repo: context.repo.repo,
+                            workflow_id: st.workflow_file,
+                            ref,
+                            inputs: dispatchInputs,
+                          });
+                        }
+                      }
 
-                        const shaCandidates = all.filter((r) => (r.head_sha ?? "") === targetSha);
-                        const branchCandidates = all.filter((r) => (r.head_branch ?? "") === ref);
-                        const candidates = (shaCandidates.length > 0 ? shaCandidates : branchCandidates);
-
-                        // Prefer matching actor when available.
-                        run = candidates.find((r) => {
-                          const actor = r.triggering_actor?.login ?? r.actor?.login;
-                          return !tokenUser || !actor || actor === tokenUser;
-                        }) || candidates[0] || null;
-
-                        if (!run) {
-                          core.info(`Waiting for ${workflow_id} run to appear...`);
+                      // 2) Discover all 6 created runs.
+                      const discoveryDeadlineMs = Math.min(deadlineMs, Date.now() + 5 * 60 * 1000);
+                      while (states.some((s) => !s.run_id) && Date.now() < discoveryDeadlineMs) {
+                        for (const st of states) {
+                          if (st.run_id) continue;
+                          const runs = await github.rest.actions.listWorkflowRuns({
+                            owner: context.repo.owner,
+                            repo: context.repo.repo,
+                            workflow_id: st.workflow_file,
+                            event: "workflow_dispatch",
+                            per_page: 20,
+                          });
+                          const all = (runs.data.workflow_runs || [])
+                            .filter((r) => r && new Date(r.created_at) >= createdAfter)
+                            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+                          const shaCandidates = all.filter((r) => (r.head_sha ?? "") === targetSha);
+                          const branchCandidates = all.filter((r) => (r.head_branch ?? "") === ref);
+                          const candidates = shaCandidates.length > 0 ? shaCandidates : branchCandidates;
+                          const found = candidates.find((r) => {
+                            const actor = r.triggering_actor?.login ?? r.actor?.login;
+                            return !tokenUser || !actor || actor === tokenUser;
+                          }) || candidates[0] || null;
+                          if (found) {
+                            st.run_id = String(found.id);
+                            st.run_url = found.html_url;
+                            st.status = found.status || "queued";
+                            st.conclusion = found.conclusion || "";
+                            core.info(`Discovered ${st.workflow_file}: run id=${st.run_id} url=${st.run_url}`);
+                          }
+                        }
+                        if (states.some((s) => !s.run_id)) {
                           await sleep(5000);
                         }
                       }
 
-                      if (!run) {
-                        core.setOutput("workflow_file", workflow_id);
-                        core.setOutput("ref", ref);
-                        core.setOutput("target_sha", targetSha);
-                        core.setOutput("run_id", "");
-                        core.setOutput("run_url", "");
-                        core.setOutput("conclusion", "timed_out");
-                        core.setOutput("status", "completed");
-                        core.warning(`Timed out discovering run for ${workflow_id} (ref=${ref}, targetSha=${targetSha}).`);
-                        return;
-                      }
-
-                      core.info(`Discovered run id=${run.id} url=${run.html_url}`);
-                      core.setOutput("workflow_file", workflow_id);
-                      core.setOutput("ref", ref);
-                      core.setOutput("target_sha", targetSha);
-                      core.setOutput("run_id", String(run.id));
-                      core.setOutput("run_url", run.html_url);
-
-                      // Wait for it to complete. We do NOT fail this step directly; we capture
-                      // status/conclusion as outputs so we can download full logs before failing.
-                      while (Date.now() < deadlineMs) {
-                        const runRes = await github.rest.actions.getWorkflowRun({
-                          owner: context.repo.owner,
-                          repo: context.repo.repo,
-                          run_id: run.id,
-                        });
-
-                        const status = runRes.data.status;
-                        const conclusion = runRes.data.conclusion;
-                        core.info(`Run ${run.id}: status=${status} conclusion=${conclusion}`);
-
-                        if (status === "completed") {
-                          core.setOutput("status", status || "completed");
-                          core.setOutput("conclusion", conclusion || "unknown");
-                          return;
+                      for (const st of states) {
+                        if (!st.run_id) {
+                          st.status = "completed";
+                          st.conclusion = "timed_out";
+                          core.warning(`Timed out discovering run for ${st.workflow_file} (ref=${ref}, targetSha=${targetSha}).`);
                         }
-
-                        await sleep(15000);
                       }
 
-                      core.setOutput("status", "completed");
-                      core.setOutput("conclusion", "timed_out");
-                      core.warning(`Timed out waiting for ${workflow_id} run id=${run.id} to complete.`);
+                      // 3) Poll all discovered runs until completed (or overall deadline).
+                      while (states.some((s) => s.status !== "completed") && Date.now() < deadlineMs) {
+                        for (const st of states) {
+                          if (st.status === "completed" || !st.run_id) continue;
+                          const runRes = await github.rest.actions.getWorkflowRun({
+                            owner: context.repo.owner,
+                            repo: context.repo.repo,
+                            run_id: Number(st.run_id),
+                          });
+                          const prevStatus = st.status;
+                          st.status = runRes.data.status || "unknown";
+                          st.conclusion = runRes.data.conclusion || "";
+                          if (st.status !== prevStatus || st.status === "completed") {
+                            core.info(`${st.workflow_file} (${st.run_id}): status=${st.status} conclusion=${st.conclusion}`);
+                          }
+                        }
+                        if (states.some((s) => s.status !== "completed")) {
+                          await sleep(15000);
+                        }
+                      }
+
+                      for (const st of states) {
+                        if (st.status !== "completed") {
+                          st.status = "completed";
+                          st.conclusion = "timed_out";
+                          core.warning(`Timed out waiting for ${st.workflow_file} run id=${st.run_id} to complete.`);
+                        }
+                      }
+
+                      const anyFailed = states.some((s) => s.conclusion !== "success");
+                      fs.writeFileSync("downstream-results.json", JSON.stringify(states, null, 2));
+                      core.setOutput("any_failed", anyFailed ? "true" : "false");
+
+                      await core.summary
+                        .addHeading("Run All Tests — Downstream Results")
+                        .addTable([
+                          [
+                            { data: "Workflow", header: true },
+                            { data: "Conclusion", header: true },
+                            { data: "Run", header: true },
+                          ],
+                          ...states.map((s) => [
+                            s.workflow_file,
+                            s.conclusion || "unknown",
+                            s.run_url ? `<a href="${s.run_url}">${s.run_id}</a>` : "n/a",
+                          ]),
+                        ])
+                        .write();
 
             - name: Record downstream run info
               if: ${{ always() }}
               run: |
-                  echo "Downstream workflow: ${{ matrix.workflow_file }}"
-                  echo "Ref: ${{ steps.dispatch_and_wait.outputs.ref }}"
-                  echo "Target SHA: ${{ steps.dispatch_and_wait.outputs.target_sha }}"
-                  echo "Run ID: ${{ steps.dispatch_and_wait.outputs.run_id }}"
-                  echo "Run URL: ${{ steps.dispatch_and_wait.outputs.run_url }}"
-                  echo "Conclusion: ${{ steps.dispatch_and_wait.outputs.conclusion }}"
+                  set -euo pipefail
+                  if [[ -f downstream-results.json ]]; then
+                    cat downstream-results.json
+                  else
+                    echo "downstream-results.json not found"
+                  fi
 
-            - name: Download full downstream logs (zip)
-              if: >-
-                  ${{
-                    always() &&
-                    steps.dispatch_and_wait.outputs.run_id != '' &&
-                    steps.dispatch_and_wait.outputs.conclusion != 'success'
-                  }}
+            - name: Download logs and artifacts for failed downstream runs
+              if: ${{ always() && steps.dispatch_and_wait.outputs.any_failed == 'true' }}
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  RUN_ID: ${{ steps.dispatch_and_wait.outputs.run_id }}
               run: |
                   set -euo pipefail
-                  mkdir -p downstream-logs
-                  zip_path="downstream-logs/${{ matrix.workflow_file }}-run-${RUN_ID}.zip"
-                  echo "Downloading logs for run ${RUN_ID} -> ${zip_path}"
-                  curl -sSfL \
-                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                    -H "Accept: application/vnd.github+json" \
-                    "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/logs" \
-                    -o "${zip_path}"
+                  mkdir -p downstream-logs downstream-artifacts
+                  python3 - <<'PY' > failed-runs.tsv
+                  import json, pathlib
+                  p = pathlib.Path("downstream-results.json")
+                  if not p.exists():
+                      raise SystemExit(0)
+                  for item in json.loads(p.read_text(encoding="utf-8")):
+                      if item.get("conclusion") != "success" and item.get("run_id"):
+                          print(f"{item['workflow_file']}\t{item['run_id']}")
+                  PY
 
-            - name: Download downstream run artifacts (zip files)
-              if: >-
-                  ${{
-                    always() &&
-                    steps.dispatch_and_wait.outputs.run_id != '' &&
-                    steps.dispatch_and_wait.outputs.conclusion != 'success'
-                  }}
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  RUN_ID: ${{ steps.dispatch_and_wait.outputs.run_id }}
-              run: |
-                  set -euo pipefail
-                  out_dir="downstream-artifacts/${{ matrix.workflow_file }}-run-${RUN_ID}"
-                  mkdir -p "${out_dir}"
-
-                  artifacts_json_path="${out_dir}/_artifacts.json"
-
-                  # Diagnostic output (helps debug intermittent empty/invalid API responses).
-                  # We still fail the step if the request fails; we just print helpful context first.
-                  set +e
-                  artifacts_http_code="$(
+                  while IFS=$'\t' read -r wf run_id; do
+                    [[ -z "${run_id}" ]] && continue
+                    zip_path="downstream-logs/${wf}-run-${run_id}.zip"
+                    echo "Downloading logs for ${wf} run ${run_id} -> ${zip_path}"
                     curl -sSfL \
+                      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                      -H "Accept: application/vnd.github+json" \
+                      "https://api.github.com/repos/${{ github.repository }}/actions/runs/${run_id}/logs" \
+                      -o "${zip_path}" || echo "Warning: failed to download logs for ${wf} run ${run_id}"
+
+                    out_dir="downstream-artifacts/${wf}-run-${run_id}"
+                    mkdir -p "${out_dir}"
+                    artifacts_json_path="${out_dir}/_artifacts.json"
+                    if curl -sSfL \
                       -H "Authorization: Bearer ${GITHUB_TOKEN}" \
                       -H "Accept: application/vnd.github+json" \
                       -o "${artifacts_json_path}" \
-                      -w '%{http_code}' \
-                      "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts"
-                  )"
-                  artifacts_curl_exit_code="$?"
-                  set -e
-
-                  artifacts_bytes="$(wc -c < "${artifacts_json_path}" 2>/dev/null || echo 0)"
-                  echo "Artifacts API diagnostics: curl_exit=${artifacts_curl_exit_code} http_code=${artifacts_http_code:-<empty>} bytes=${artifacts_bytes}"
-
-                  if [[ "${artifacts_curl_exit_code}" != "0" ]]; then
-                    exit "${artifacts_curl_exit_code}"
-                  fi
-
-                  # IMPORTANT: `python3 - <<'PY'` reads the *script* from stdin, so we cannot
-                  # simultaneously pipe JSON into stdin. Read the downloaded JSON file instead.
-                  python3 - "${artifacts_json_path}" <<'PY' > "${out_dir}/_artifact_index.txt"
-                  import json,sys,re
-
+                      "https://api.github.com/repos/${{ github.repository }}/actions/runs/${run_id}/artifacts?per_page=100"; then
+                      python3 - "${artifacts_json_path}" <<'PY' > "${out_dir}/_artifact_index.txt"
+                  import json, sys, re
                   path = sys.argv[1]
                   try:
                       raw = open(path, "r", encoding="utf-8", errors="replace").read()
-                  except OSError as e:
-                      print(f"Warning: could not read artifacts json file: {e}", file=sys.stderr)
-                      sys.exit(0)
-
-                  if not raw.strip():
-                      # GitHub can sometimes return an empty response body even when the request
-                      # succeeded. Treat this as "no artifacts".
-                      sys.exit(0)
-
-                  try:
-                      data = json.loads(raw)
-                  except json.JSONDecodeError as e:
-                      print(f"Warning: artifacts response was not valid JSON: {e}", file=sys.stderr)
-                      # Best-effort: don't fail the whole job during artifact collection.
-                      sys.exit(0)
-
-                  arts = data.get("artifacts", []) or []
-                  for a in arts:
-                      name = a.get("name") or "artifact"
+                      data = json.loads(raw) if raw.strip() else {}
+                  except Exception:
+                      data = {}
+                  for a in data.get("artifacts", []) or []:
                       art_id = a.get("id")
-                      if not art_id:
-                          continue
-                      safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
-                      print(f"{art_id}\t{safe}\t{name}")
+                      name = a.get("name") or "artifact"
+                      if art_id:
+                          safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+                          print(f"{art_id}\t{safe}\t{name}")
                   PY
+                      while IFS=$'\t' read -r art_id safe_name orig_name; do
+                        [[ -z "${art_id}" ]] && continue
+                        curl -sSfL \
+                          -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                          -H "Accept: application/vnd.github+json" \
+                          "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${art_id}/zip" \
+                          -o "${out_dir}/${safe_name}.zip" || true
+                      done < "${out_dir}/_artifact_index.txt"
+                    fi
+                  done < failed-runs.tsv
 
-                  if [[ ! -s "${out_dir}/_artifact_index.txt" ]]; then
-                    echo "No downstream artifacts to download for run ${RUN_ID}."
-                    exit 0
-                  fi
-
-                  echo "Downloading downstream artifacts listed in ${out_dir}/_artifact_index.txt"
-                  while IFS=$'\t' read -r art_id safe_name orig_name; do
-                    zip_path="${out_dir}/${safe_name}.zip"
-                    echo "Downloading artifact id=${art_id} name=${orig_name} -> ${zip_path}"
-                    curl -sSfL \
-                      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                      -H "Accept: application/vnd.github+json" \
-                      "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${art_id}/zip" \
-                      -o "${zip_path}"
-                  done < "${out_dir}/_artifact_index.txt"
-
-            - name: Upload downstream artifacts bundle
-              if: >-
-                  ${{
-                    always() &&
-                    steps.dispatch_and_wait.outputs.run_id != '' &&
-                    steps.dispatch_and_wait.outputs.conclusion != 'success'
-                  }}
+            - name: Upload downstream logs bundle
+              if: ${{ always() && steps.dispatch_and_wait.outputs.any_failed == 'true' }}
               uses: actions/upload-artifact@v4
               with:
-                  name: downstream-artifacts-${{ matrix.workflow_file }}-run-${{ steps.dispatch_and_wait.outputs.run_id }}
-                  path: downstream-artifacts/${{ matrix.workflow_file }}-run-${{ steps.dispatch_and_wait.outputs.run_id }}
+                  name: downstream-logs-failed
+                  path: downstream-logs/
                   if-no-files-found: ignore
 
-            - name: Upload downstream logs artifact
-              if: >-
-                  ${{
-                    always() &&
-                    steps.dispatch_and_wait.outputs.run_id != '' &&
-                    steps.dispatch_and_wait.outputs.conclusion != 'success'
-                  }}
+            - name: Upload downstream artifacts bundle
+              if: ${{ always() && steps.dispatch_and_wait.outputs.any_failed == 'true' }}
               uses: actions/upload-artifact@v4
               with:
-                  name: downstream-logs-${{ matrix.workflow_file }}-run-${{ steps.dispatch_and_wait.outputs.run_id }}
-                  path: downstream-logs/${{ matrix.workflow_file }}-run-${{ steps.dispatch_and_wait.outputs.run_id }}.zip
-                  if-no-files-found: error
+                  name: downstream-artifacts-failed
+                  path: downstream-artifacts/
+                  if-no-files-found: ignore
 
-            - name: Fail this matrix entry if downstream failed
-              if: >-
-                  ${{
-                    steps.dispatch_and_wait.outputs.conclusion != 'success'
-                  }}
+            - name: Fail if any downstream workflow did not succeed
+              if: ${{ steps.dispatch_and_wait.outputs.any_failed == 'true' }}
               run: |
-                  echo "Downstream workflow ${{ matrix.workflow_file }} did not succeed."
-                  echo "Run URL: ${{ steps.dispatch_and_wait.outputs.run_url }}"
-                  echo "Conclusion: ${{ steps.dispatch_and_wait.outputs.conclusion }}"
+                  set -euo pipefail
+                  python3 - <<'PY'
+                  import json, pathlib
+                  for item in json.loads(pathlib.Path("downstream-results.json").read_text(encoding="utf-8")):
+                      if item.get("conclusion") != "success":
+                          print(f"FAILED: {item['workflow_file']} conclusion={item.get('conclusion')} url={item.get('run_url')}")
+                  PY
                   exit 1
