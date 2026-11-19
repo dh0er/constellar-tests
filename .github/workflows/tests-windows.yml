@@ -29,7 +29,7 @@ jobs:
   test:
     name: Run tests on Windows (shard ${{ matrix.shard }})
     runs-on: windows-latest
-    timeout-minutes: 360
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -39,6 +39,7 @@ jobs:
       ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
       TEST_SHARD_INDEX: ${{ matrix.shard }}
       TEST_SHARD_TOTAL: "2"
+      TEST_SHARD_0_OFFSET_SECONDS: "1140"
     steps:
       - uses: actions/checkout@v4
       - name: Setup SSH (deploy key)
