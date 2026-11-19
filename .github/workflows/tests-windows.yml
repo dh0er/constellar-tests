@@ -39,7 +39,7 @@ jobs:
       ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
       TEST_SHARD_INDEX: ${{ matrix.shard }}
       TEST_SHARD_TOTAL: "2"
-      TEST_SHARD_0_OFFSET_SECONDS: "1140"
+      TEST_SHARD_0_OFFSET_SECONDS: "180"
     steps:
       - uses: actions/checkout@v4
       - name: Setup SSH (deploy key)

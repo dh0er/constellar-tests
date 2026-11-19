@@ -34,6 +34,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - label: "vps-contract"
+            artifact_suffix: "vps-contract"
+            role: "vps-contract"
+            shard: "0"
           - label: "host"
             artifact_suffix: "host"
             role: "host"
@@ -46,12 +50,16 @@ jobs:
             artifact_suffix: "shard-1"
             role: "integration"
             shard: "1"
+          - label: "shard 2"
+            artifact_suffix: "shard-2"
+            role: "integration"
+            shard: "2"
     env:
       REPO_PATH: ${{ secrets.REPO_PATH }}
       ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
       TEST_RUNNER_ROLE: ${{ matrix.role }}
       TEST_SHARD_INDEX: ${{ matrix.shard }}
-      TEST_SHARD_TOTAL: "2"
+      TEST_SHARD_TOTAL: "3"
     steps:
       - uses: actions/checkout@v4
       - name: Setup SSH (deploy key)
@@ -89,14 +97,28 @@ jobs:
           set -euo pipefail
           HAS_SHARDING=0
           HAS_ROLE=0
+          HAS_VPS_ROLE=0
           if grep -q "TEST_SHARD_INDEX" repo/test.py 2>/dev/null; then
             HAS_SHARDING=1
           fi
           if grep -q "TEST_RUNNER_ROLE" repo/.github/scripts/tests-linux/layer2-tests/run-tests.sh 2>/dev/null; then
             HAS_ROLE=1
           fi
+          if grep -q "vps-contract)" repo/.github/scripts/tests-linux/layer2-tests/run-tests.sh 2>/dev/null; then
+            HAS_VPS_ROLE=1
+          fi
 
-          if [[ "${{ matrix.role }}" == "host" ]]; then
+          if [[ "${{ matrix.role }}" == "vps-contract" ]]; then
+            if [[ "$HAS_VPS_ROLE" == "1" ]]; then
+              echo "supported=true" >> "$GITHUB_OUTPUT"
+              echo "run_shard=true" >> "$GITHUB_OUTPUT"
+              echo "Source repo supports TEST_RUNNER_ROLE=vps-contract split."
+            else
+              echo "supported=false" >> "$GITHUB_OUTPUT"
+              echo "run_shard=false" >> "$GITHUB_OUTPUT"
+              echo "Source repo lacks vps-contract role split; host/shard 0 covers it."
+            fi
+          elif [[ "${{ matrix.role }}" == "host" ]]; then
             if [[ "$HAS_ROLE" == "1" ]]; then
               echo "supported=true" >> "$GITHUB_OUTPUT"
               echo "run_shard=true" >> "$GITHUB_OUTPUT"
