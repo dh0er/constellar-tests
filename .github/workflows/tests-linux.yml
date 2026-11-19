@@ -27,16 +27,29 @@ concurrency:
 
 jobs:
   test:
-    name: Run tests on Linux (shard ${{ matrix.shard }})
+    name: Run tests on Linux (${{ matrix.label }})
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1]
+        include:
+          - label: "host"
+            artifact_suffix: "host"
+            role: "host"
+            shard: "0"
+          - label: "shard 0"
+            artifact_suffix: "shard-0"
+            role: "integration"
+            shard: "0"
+          - label: "shard 1"
+            artifact_suffix: "shard-1"
+            role: "integration"
+            shard: "1"
     env:
       REPO_PATH: ${{ secrets.REPO_PATH }}
       ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
+      TEST_RUNNER_ROLE: ${{ matrix.role }}
       TEST_SHARD_INDEX: ${{ matrix.shard }}
       TEST_SHARD_TOTAL: "2"
     steps:
@@ -74,10 +87,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          HAS_SHARDING=0
+          HAS_ROLE=0
           if grep -q "TEST_SHARD_INDEX" repo/test.py 2>/dev/null; then
+            HAS_SHARDING=1
+          fi
+          if grep -q "TEST_RUNNER_ROLE" repo/.github/scripts/tests-linux/layer2-tests/run-tests.sh 2>/dev/null; then
+            HAS_ROLE=1
+          fi
+
+          if [[ "${{ matrix.role }}" == "host" ]]; then
+            if [[ "$HAS_ROLE" == "1" ]]; then
+              echo "supported=true" >> "$GITHUB_OUTPUT"
+              echo "run_shard=true" >> "$GITHUB_OUTPUT"
+              echo "Source repo supports TEST_RUNNER_ROLE=host split."
+            else
+              echo "supported=false" >> "$GITHUB_OUTPUT"
+              echo "run_shard=false" >> "$GITHUB_OUTPUT"
+              echo "Source repo lacks TEST_RUNNER_ROLE split; shard 0 covers host suites."
+            fi
+          elif [[ "$HAS_SHARDING" == "1" ]]; then
             echo "supported=true" >> "$GITHUB_OUTPUT"
             echo "run_shard=true" >> "$GITHUB_OUTPUT"
-            echo "Source repo supports integration sharding (shard ${{ matrix.shard }}/${{ env.TEST_SHARD_TOTAL }})."
+            echo "Source repo supports integration sharding (role=${{ matrix.role }}, shard ${{ matrix.shard }}/${{ env.TEST_SHARD_TOTAL }})."
           else
             echo "supported=false" >> "$GITHUB_OUTPUT"
             if [[ "${{ matrix.shard }}" == "0" ]]; then
@@ -140,6 +172,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ failure() && steps.shard-support.outputs.run_shard == 'true' }}
         with:
-          name: layer2-screenshots-linux-shard-${{ matrix.shard }}
+          name: layer2-screenshots-linux-${{ matrix.artifact_suffix }}
           path: repo/integration_test/screenshots/
           if-no-files-found: ignore
