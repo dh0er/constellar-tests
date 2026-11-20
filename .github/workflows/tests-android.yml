@@ -90,9 +90,9 @@ jobs:
           fi
       - name: Free disk space
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
-        uses: jlumbroso/free-disk-space@main
+        uses: jlumbroso/free-disk-space@v2
         with:
-          tool-cache: true
+          preinstalled-runtimes: true
           android: false
           dotnet: true
           haskell: true
