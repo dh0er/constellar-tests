@@ -61,9 +61,9 @@ jobs:
       TEST_SHARD_INDEX: ${{ matrix.shard }}
       TEST_SHARD_TOTAL: "3"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup SSH (deploy key)
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.REPO_SSH_KEY }}
       - name: Trust github.com host key
@@ -180,7 +180,7 @@ jobs:
           fi
           echo "Using Supabase CLI $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v3
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:
           version: ${{ steps.supabase-cli-version.outputs.version }}
@@ -191,7 +191,7 @@ jobs:
       - name: Run interpreter (execute 'run' steps from cloned workflow)
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         run: ruby .github/scripts/run_workflow_run_steps.rb --workflow repo/.github/workflows/tests-linux.yml --job layer2-tests --default-working-directory repo
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ failure() && steps.shard-support.outputs.run_shard == 'true' }}
         with:
           name: layer2-screenshots-linux-${{ matrix.artifact_suffix }}

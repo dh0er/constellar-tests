@@ -41,9 +41,9 @@ jobs:
       TEST_SHARD_INDEX: ${{ matrix.shard }}
       TEST_SHARD_TOTAL: "3"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup SSH (deploy key)
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.REPO_SSH_KEY }}
       - name: Trust github.com host key
@@ -89,7 +89,7 @@ jobs:
               echo "Source repo lacks sharding support; shard ${{ matrix.shard }} exiting early."
             fi
           fi
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:
           python-version: "3.11"
@@ -142,7 +142,7 @@ jobs:
               echo "::endgroup::"
             done
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ failure() && steps.shard-support.outputs.run_shard == 'true' }}
         with:
           name: layer1-screenshots-ios-shard-${{ matrix.shard }}
