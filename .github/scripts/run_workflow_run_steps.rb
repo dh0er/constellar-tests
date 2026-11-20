@@ -45,6 +45,7 @@ class WorkflowRunInterpreter
       log "==> #{name} (if: #{if_cond || 'none'}) #{should_run ? '' : '[SKIPPED]'}"
       next unless should_run
 
+      explicit_shell = step.key?("shell")
       shell = (step["shell"] || default_shell).to_s
       step_env = job_env.merge(normalize_hash(step["env"]))
       continue_on_error = !!step["continue-on-error"]
@@ -53,7 +54,13 @@ class WorkflowRunInterpreter
       expanded_cmd = expand_expressions(run_cmd.to_s, step_env)
 
       workdir = resolve_workdir(step["working-directory"])
-      status = exec_step(expanded_cmd, shell: shell, workdir: workdir, env: step_env)
+      status = exec_step(
+        expanded_cmd,
+        shell: shell,
+        explicit_shell: explicit_shell,
+        workdir: workdir,
+        env: step_env,
+      )
 
       if status.success?
         next
@@ -117,7 +124,28 @@ class WorkflowRunInterpreter
     false
   end
 
-  def exec_step(cmd, shell:, workdir:, env:)
+  # Wrap a run: script the way GitHub Actions does, so a failing command in
+  # the middle of a multi-line step fails the step, not only the last one:
+  # - no shell (Linux/macOS): bash -e
+  # - shell: bash:             bash -eo pipefail
+  # - pwsh:                    $ErrorActionPreference = 'stop' and the exit
+  #                            code of the last native command
+  # https://docs.github.com/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
+  def github_script(cmd, shell:, explicit_shell:)
+    if pwsh?(shell)
+      return "$ErrorActionPreference = 'stop'\n#{cmd}\n" \
+             "if ((Test-Path -LiteralPath variable:\\LASTEXITCODE)) { exit $LASTEXITCODE }"
+    end
+
+    options = explicit_shell && shell == "bash" ? "set -eo pipefail" : "set -e"
+    "#{options}\n#{cmd}"
+  end
+
+  def pwsh?(shell)
+    shell.start_with?("pwsh") || shell.start_with?("powershell")
+  end
+
+  def exec_step(cmd, shell:, explicit_shell:, workdir:, env:)
     log "workdir=#{workdir}"
     log "shell=#{shell}"
     log "command=#{cmd.inspect}"
@@ -130,8 +158,9 @@ class WorkflowRunInterpreter
     $stderr.sync = true
 
     status = nil
+    cmd = github_script(cmd, shell: shell, explicit_shell: explicit_shell)
 
-    if shell.start_with?("pwsh") || shell.start_with?("powershell")
+    if pwsh?(shell)
       # -Command accepts multi-line scripts fine.
       Open3.popen2e(env, "pwsh", "-NoProfile", "-NonInteractive", "-Command", cmd, chdir: workdir) do |_stdin, out, wait_thr|
         begin
@@ -144,7 +173,7 @@ class WorkflowRunInterpreter
         status = wait_thr.value
       end
     else
-      # Use bash with strict-ish behavior. We keep it simple and let the script decide.
+      # Login shell for the runner's PATH; errexit comes from github_script.
       Open3.popen2e(env, "bash", "-lc", cmd, chdir: workdir) do |_stdin, out, wait_thr|
         begin
           while (chunk = out.readpartial(4096))
