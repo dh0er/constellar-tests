@@ -88,52 +88,6 @@ jobs:
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:
           python-version: "3.11"
-      - name: Select Xcode
-        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
-        run: |
-          set -euo pipefail
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-          xcodebuild -version
-      - name: Pre-boot iOS Simulator (background)
-        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo xcodebuild -runFirstLaunch || true
-          UDID="$(python3 - <<'PY'
-          import json, os, re, subprocess, sys
-          data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"], text=True))
-          cands = []
-          for runtime, devices in data.get("devices", {}).items():
-              if "iOS" not in runtime:
-                  continue
-              for d in devices:
-                  if d.get("isAvailable", True) and (d.get("name") or "").startswith("iPhone") and d.get("udid"):
-                      cands.append((runtime, d["name"], d["udid"]))
-          if not cands:
-              sys.exit(0)
-          def ios_ver(r):
-              m = re.search(r"iOS[- ](\d+)[.-](\d+)", r)
-              return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
-          max_major = int(os.environ.get("IOS_MAX_RUNTIME_MAJOR", "27"))
-          stable = [c for c in cands if ios_ver(c[0])[0] <= max_major]
-          if stable:
-              cands = stable
-          def form_rank(n):
-              if re.search(r"duo|fold|flip", n, re.IGNORECASE): return 0
-              if re.fullmatch(r"iPhone \d+", n): return 3
-              if re.fullmatch(r"iPhone \d+ (Pro|Plus)", n): return 2
-              return 1
-          chosen = max(cands, key=lambda t: (form_rank(t[1]) > 0, ios_ver(t[0]), form_rank(t[1])))
-          print(chosen[2])
-          PY
-          )"
-          if [[ -n "${UDID}" ]]; then
-            echo "IOS_PREBOOTED_UDID=${UDID}" >> "$GITHUB_ENV"
-            echo "Pre-booting iOS simulator ${UDID} in background while toolchain & caches restore..."
-            nohup xcrun simctl boot "${UDID}" >/dev/null 2>&1 </dev/null &
-            sleep 2
-          fi
       - name: Read pinned Flutter version from source repo
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         id: flutter-version
@@ -172,6 +126,12 @@ jobs:
             repo/ios/Pods
           key: pods-ios-v1-${{ hashFiles('repo/ios/Podfile.lock') }}
           restore-keys: pods-ios-v1-
+      - name: Select Xcode
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
       - uses: actions/setup-node@v7
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:
