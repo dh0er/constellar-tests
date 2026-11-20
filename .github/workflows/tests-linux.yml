@@ -142,6 +142,16 @@ jobs:
               echo "Source repo lacks sharding support; shard ${{ matrix.shard }} exiting early."
             fi
           fi
+      - uses: actions/setup-python@v7
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' && matrix.role == 'vps-contract' }}
+        with:
+          python-version: "3.11"
+          architecture: x64
+      - uses: actions/setup-node@v7
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' && matrix.role == 'vps-contract' }}
+        with:
+          node-version: "24.15.0"
+          check-latest: false
       - name: Read pinned Flutter version from source repo
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         id: flutter-version

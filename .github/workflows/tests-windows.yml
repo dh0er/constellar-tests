@@ -94,6 +94,7 @@ jobs:
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:
           python-version: "3.11"
+          architecture: x64
       - name: Read pinned Flutter version from source repo
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         id: flutter-version
