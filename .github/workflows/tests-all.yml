@@ -42,6 +42,11 @@ jobs:
             - name: Trigger and wait for all platform test workflows
               id: dispatch_and_wait
               uses: actions/github-script@v9
+              env:
+                  INPUT_REF: ${{ inputs.ref }}
+                  INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+                  INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+                  INPUT_SOURCE_PR: ${{ inputs.source_pr }}
               with:
                   github-token: ${{ secrets.GITHUB_TOKEN }}
                   script: |
@@ -58,12 +63,11 @@ jobs:
                         "tests-web.yml",
                       ];
 
-                      const refInput = "${{ inputs.ref }}".trim();
+                      const refInput = (process.env.INPUT_REF || "").trim();
                       const ref = refInput || context.ref.replace(/^refs\/(heads|tags)\//, "");
-                      const sourceRepoInput = "${{ inputs.source_repo }}".trim();
-                      const sourceRefInput = "${{ inputs.source_ref }}".trim();
-                      const sourceShaInput = "${{ inputs.source_sha }}".trim();
-                      let sourcePrInput = "${{ inputs.source_pr }}".trim();
+                      const sourceRefInput = (process.env.INPUT_SOURCE_REF || "").trim();
+                      const sourceShaInput = (process.env.INPUT_SOURCE_SHA || "").trim();
+                      let sourcePrInput = (process.env.INPUT_SOURCE_PR || "").trim();
 
                       // Derive PR number from a refs/pull/<n>/... ref when not explicitly provided.
                       if (!sourcePrInput && /^refs\/pull\/(\d+)\//.test(sourceRefInput)) {
@@ -86,7 +90,6 @@ jobs:
 
                       const tokenUser = process.env.GITHUB_ACTOR;
                       const dispatchInputs = {
-                        ...(sourceRepoInput ? { source_repo: sourceRepoInput } : {}),
                         ...(sourceRefInput ? { source_ref: sourceRefInput } : {}),
                         ...(sourceShaInput ? { source_sha: sourceShaInput } : {}),
                         ...(sourcePrInput ? { source_pr: sourcePrInput } : {}),
