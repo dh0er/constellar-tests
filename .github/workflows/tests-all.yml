@@ -292,12 +292,33 @@ jobs:
                     fi
                   done < failed-runs.tsv
 
+            - name: Checkout helper scripts for failure bundle encryption
+              if: ${{ always() && steps.dispatch_and_wait.outputs.any_failed == 'true' }}
+              uses: actions/checkout@v7
+              with:
+                  clean: false
+
+            - name: Setup Node for failure bundle encryption
+              if: ${{ always() && steps.dispatch_and_wait.outputs.any_failed == 'true' }}
+              uses: actions/setup-node@v7
+              with:
+                  node-version: "22"
+
+            - name: Encrypt downstream logs and artifacts bundles
+              if: ${{ always() && steps.dispatch_and_wait.outputs.any_failed == 'true' }}
+              env:
+                  CI_LOG_PUBLIC_KEY: ${{ secrets.CI_LOG_PUBLIC_KEY }}
+              run: |
+                  set -euo pipefail
+                  node .github/scripts/ci_crypto.mjs encrypt-artifact --out "$RUNNER_TEMP/downstream-logs-failed.tar.gz.cenc1" downstream-logs
+                  node .github/scripts/ci_crypto.mjs encrypt-artifact --out "$RUNNER_TEMP/downstream-artifacts-failed.tar.gz.cenc1" downstream-artifacts
+
             - name: Upload downstream logs bundle
               if: ${{ always() && steps.dispatch_and_wait.outputs.any_failed == 'true' }}
               uses: actions/upload-artifact@v7
               with:
                   name: downstream-logs-failed
-                  path: downstream-logs/
+                  path: ${{ runner.temp }}/downstream-logs-failed.tar.gz.cenc1
                   if-no-files-found: ignore
 
             - name: Upload downstream artifacts bundle
@@ -305,7 +326,7 @@ jobs:
               uses: actions/upload-artifact@v7
               with:
                   name: downstream-artifacts-failed
-                  path: downstream-artifacts/
+                  path: ${{ runner.temp }}/downstream-artifacts-failed.tar.gz.cenc1
                   if-no-files-found: ignore
 
             - name: Fail if any downstream workflow did not succeed

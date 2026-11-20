@@ -52,7 +52,7 @@ jobs:
           # Avoid ssh-keyscan on Windows runners (can fail due to KEX mismatch depending on ssh-keyscan binary).
           # Let OpenSSH accept GitHub's host key on first use.
           GIT_SSH_COMMAND: ssh -o StrictHostKeyChecking=accept-new
-        run: git clone "${{ secrets.REPO_PATH }}" repo
+        run: git clone --quiet "${{ secrets.REPO_PATH }}" repo
       - name: Checkout requested source ref/SHA (optional)
         if: ${{ inputs.source_ref != '' || inputs.source_sha != '' }}
         shell: pwsh
@@ -60,17 +60,12 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           if ("${{ inputs.source_ref }}" -ne "") {
-            Write-Host "Fetching source ref: ${{ inputs.source_ref }}"
-            git fetch --no-tags --prune origin "${{ inputs.source_ref }}"
-            git checkout --detach FETCH_HEAD
+            git fetch --quiet --no-tags --prune origin "${{ inputs.source_ref }}"
+            git checkout --quiet --detach FETCH_HEAD
           } elseif ("${{ inputs.source_sha }}" -ne "") {
-            Write-Host "Checking out source sha: ${{ inputs.source_sha }}"
-            # Try to fetch the object in case it's not present in the clone.
-            try { git fetch --no-tags --prune origin "${{ inputs.source_sha }}" } catch { }
-            git checkout --detach "${{ inputs.source_sha }}"
+            try { git fetch --quiet --no-tags --prune origin "${{ inputs.source_sha }}" } catch { }
+            git checkout --quiet --detach "${{ inputs.source_sha }}"
           }
-          Write-Host "Checked out commit:"
-          git rev-parse HEAD
       - name: Check integration sharding support in source repo
         id: shard-support
         shell: bash
@@ -117,6 +112,10 @@ jobs:
           flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: "stable"
           cache: true
+      - uses: actions/setup-node@v7
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
+        with:
+          node-version: "22"
       - uses: ruby/setup-ruby@v1
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:
@@ -124,10 +123,18 @@ jobs:
       - name: Run interpreter (execute 'run' steps from cloned workflow)
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         shell: pwsh
-        run: ruby .github/scripts/run_workflow_run_steps.rb --workflow repo/.github/workflows/tests-windows.yml --job layer1-tests --default-working-directory repo
+        env:
+          CI_LOG_PUBLIC_KEY: ${{ secrets.CI_LOG_PUBLIC_KEY }}
+        run: node .github/scripts/ci_crypto.mjs wrap -- ruby .github/scripts/run_workflow_run_steps.rb --workflow repo/.github/workflows/tests-windows.yml --job layer1-tests --default-working-directory repo
+      - name: Encrypt failure artifacts
+        if: ${{ failure() && steps.shard-support.outputs.run_shard == 'true' }}
+        shell: pwsh
+        env:
+          CI_LOG_PUBLIC_KEY: ${{ secrets.CI_LOG_PUBLIC_KEY }}
+        run: node .github/scripts/ci_crypto.mjs encrypt-artifact --base-dir repo/integration_test --out "$env:RUNNER_TEMP/layer1-screenshots-windows-shard-${{ matrix.shard }}.tar.gz.cenc1" screenshots
       - uses: actions/upload-artifact@v7
         if: ${{ failure() && steps.shard-support.outputs.run_shard == 'true' }}
         with:
           name: layer1-screenshots-windows-shard-${{ matrix.shard }}
-          path: repo/integration_test/screenshots/
+          path: ${{ runner.temp }}/layer1-screenshots-windows-shard-${{ matrix.shard }}.tar.gz.cenc1
           if-no-files-found: ignore

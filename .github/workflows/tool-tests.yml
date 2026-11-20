@@ -34,6 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v7
       - name: Setup SSH (deploy key)
         uses: webfactory/ssh-agent@v0.10.0
         with:
@@ -44,23 +45,19 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Clone repository
-        run: git clone "${{ secrets.REPO_PATH }}" repo
+        run: git clone --quiet "${{ secrets.REPO_PATH }}" repo
       - name: Checkout requested source ref/SHA (optional)
         if: ${{ inputs.source_ref != '' || inputs.source_sha != '' }}
         working-directory: repo
         run: |
           set -euo pipefail
           if [ -n "${{ inputs.source_ref }}" ]; then
-            echo "Fetching source ref: ${{ inputs.source_ref }}"
-            git fetch --no-tags --prune origin "${{ inputs.source_ref }}"
-            git checkout --detach FETCH_HEAD
+            git fetch --quiet --no-tags --prune origin "${{ inputs.source_ref }}"
+            git checkout --quiet --detach FETCH_HEAD
           elif [ -n "${{ inputs.source_sha }}" ]; then
-            echo "Checking out source sha: ${{ inputs.source_sha }}"
-            git fetch --no-tags --prune origin "${{ inputs.source_sha }}" || true
-            git checkout --detach "${{ inputs.source_sha }}"
+            git fetch --quiet --no-tags --prune origin "${{ inputs.source_sha }}" || true
+            git checkout --quiet --detach "${{ inputs.source_sha }}"
           fi
-          echo "Checked out commit:"
-          git rev-parse HEAD
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
@@ -87,14 +84,16 @@ jobs:
           channel: "stable"
           cache: true
       - name: Run Linux tool tests
-        working-directory: repo
-        run: bash .github/scripts/tool-tests/run-linux.sh
+        env:
+          CI_LOG_PUBLIC_KEY: ${{ secrets.CI_LOG_PUBLIC_KEY }}
+        run: node .github/scripts/ci_crypto.mjs wrap --cwd repo -- bash .github/scripts/tool-tests/run-linux.sh
 
   windows:
     name: Tool tests (windows)
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v7
       - name: Setup SSH (deploy key)
         uses: webfactory/ssh-agent@v0.10.0
         with:
@@ -103,7 +102,7 @@ jobs:
         shell: pwsh
         env:
           GIT_SSH_COMMAND: ssh -o StrictHostKeyChecking=accept-new
-        run: git clone "${{ secrets.REPO_PATH }}" repo
+        run: git clone --quiet "${{ secrets.REPO_PATH }}" repo
       - name: Checkout requested source ref/SHA (optional)
         if: ${{ inputs.source_ref != '' || inputs.source_sha != '' }}
         shell: pwsh
@@ -111,20 +110,19 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           if ("${{ inputs.source_ref }}" -ne "") {
-            Write-Host "Fetching source ref: ${{ inputs.source_ref }}"
-            git fetch --no-tags --prune origin "${{ inputs.source_ref }}"
-            git checkout --detach FETCH_HEAD
+            git fetch --quiet --no-tags --prune origin "${{ inputs.source_ref }}"
+            git checkout --quiet --detach FETCH_HEAD
           } elseif ("${{ inputs.source_sha }}" -ne "") {
-            Write-Host "Checking out source sha: ${{ inputs.source_sha }}"
-            try { git fetch --no-tags --prune origin "${{ inputs.source_sha }}" } catch { }
-            git checkout --detach "${{ inputs.source_sha }}"
+            try { git fetch --quiet --no-tags --prune origin "${{ inputs.source_sha }}" } catch { }
+            git checkout --quiet --detach "${{ inputs.source_sha }}"
           }
-          Write-Host "Checked out commit:"
-          git rev-parse HEAD
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           architecture: x64
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
       - name: Read pinned Flutter version from source repo
         id: flutter-version
         shell: bash
@@ -144,5 +142,6 @@ jobs:
           cache: true
       - name: Run Windows tool tests
         shell: pwsh
-        working-directory: repo
-        run: pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .github/scripts/tool-tests/run-windows.ps1
+        env:
+          CI_LOG_PUBLIC_KEY: ${{ secrets.CI_LOG_PUBLIC_KEY }}
+        run: node .github/scripts/ci_crypto.mjs wrap --cwd repo -- pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .github/scripts/tool-tests/run-windows.ps1
