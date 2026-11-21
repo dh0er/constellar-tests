@@ -41,6 +41,8 @@ jobs:
       TEST_SHARD_TOTAL: "2"
       TEST_SHARD_0_OFFSET_SECONDS: "60"
     steps:
+      - name: Disable Spotlight indexing on runner
+        run: sudo mdutil -a -i off >/dev/null 2>&1 || true
       - uses: actions/checkout@v7
       - name: Setup SSH (deploy key)
         uses: webfactory/ssh-agent@v0.10.0
