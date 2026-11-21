@@ -34,9 +34,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: "vps-contract"
-            artifact_suffix: "vps-contract"
-            role: "vps-contract"
+          - label: "vps-sql"
+            artifact_suffix: "vps-sql"
+            role: "vps-sql"
             shard: "0"
           - label: "host"
             artifact_suffix: "host"
@@ -54,12 +54,17 @@ jobs:
             artifact_suffix: "shard-2"
             role: "integration"
             shard: "2"
+          - label: "shard 3"
+            artifact_suffix: "shard-3"
+            role: "integration"
+            shard: "3"
     env:
       REPO_PATH: ${{ secrets.REPO_PATH }}
       ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
       TEST_RUNNER_ROLE: ${{ matrix.role }}
       TEST_SHARD_INDEX: ${{ matrix.shard }}
-      TEST_SHARD_TOTAL: "3"
+      TEST_SHARD_TOTAL: "4"
+      TEST_SHARD_0_OFFSET_SECONDS: "0"
     steps:
       - uses: actions/checkout@v7
       - name: Setup SSH (deploy key)
@@ -72,24 +77,19 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Clone repository
-        run: git clone "${{ secrets.REPO_PATH }}" repo
+        run: git clone --quiet "${{ secrets.REPO_PATH }}" repo
       - name: Checkout requested source ref/SHA (optional)
         if: ${{ inputs.source_ref != '' || inputs.source_sha != '' }}
         working-directory: repo
         run: |
           set -euo pipefail
           if [ -n "${{ inputs.source_ref }}" ]; then
-            echo "Fetching source ref: ${{ inputs.source_ref }}"
-            git fetch --no-tags --prune origin "${{ inputs.source_ref }}"
-            git checkout --detach FETCH_HEAD
+            git fetch --quiet --no-tags --prune origin "${{ inputs.source_ref }}"
+            git checkout --quiet --detach FETCH_HEAD
           elif [ -n "${{ inputs.source_sha }}" ]; then
-            echo "Checking out source sha: ${{ inputs.source_sha }}"
-            # Try to fetch the object in case it's not present in the clone.
-            git fetch --no-tags --prune origin "${{ inputs.source_sha }}" || true
-            git checkout --detach "${{ inputs.source_sha }}"
+            git fetch --quiet --no-tags --prune origin "${{ inputs.source_sha }}" || true
+            git checkout --quiet --detach "${{ inputs.source_sha }}"
           fi
-          echo "Checked out commit:"
-          git rev-parse HEAD
       - name: Check integration sharding support in source repo
         id: shard-support
         shell: bash
@@ -98,6 +98,7 @@ jobs:
           HAS_SHARDING=0
           HAS_ROLE=0
           HAS_VPS_ROLE=0
+          HAS_VPS_SQL_ROLE=0
           if grep -q "TEST_SHARD_INDEX" repo/test.py 2>/dev/null; then
             HAS_SHARDING=1
           fi
@@ -107,16 +108,24 @@ jobs:
           if grep -q "vps-contract)" repo/.github/scripts/tests-linux/layer2-tests/run-tests.sh 2>/dev/null; then
             HAS_VPS_ROLE=1
           fi
+          if grep -q "vps-sql)" repo/.github/scripts/tests-linux/layer2-tests/run-tests.sh 2>/dev/null; then
+            HAS_VPS_SQL_ROLE=1
+          fi
 
-          if [[ "${{ matrix.role }}" == "vps-contract" ]]; then
-            if [[ "$HAS_VPS_ROLE" == "1" ]]; then
+          if [[ "${{ matrix.role }}" == "vps-sql" ]]; then
+            if [[ "$HAS_VPS_SQL_ROLE" == "1" ]]; then
               echo "supported=true" >> "$GITHUB_OUTPUT"
               echo "run_shard=true" >> "$GITHUB_OUTPUT"
-              echo "Source repo supports TEST_RUNNER_ROLE=vps-contract split."
+              echo "Source repo supports TEST_RUNNER_ROLE=vps-sql combined role."
+            elif [[ "$HAS_VPS_ROLE" == "1" ]]; then
+              echo "supported=true" >> "$GITHUB_OUTPUT"
+              echo "run_shard=true" >> "$GITHUB_OUTPUT"
+              echo "TEST_RUNNER_ROLE=vps-contract" >> "$GITHUB_ENV"
+              echo "Source repo supports vps-contract only; running vps-contract (integration shard 0 covers sql)."
             else
               echo "supported=false" >> "$GITHUB_OUTPUT"
               echo "run_shard=false" >> "$GITHUB_OUTPUT"
-              echo "Source repo lacks vps-contract role split; host/shard 0 covers it."
+              echo "Source repo lacks vps-contract/vps-sql split; host/shard 0 covers it."
             fi
           elif [[ "${{ matrix.role }}" == "host" ]]; then
             if [[ "$HAS_ROLE" == "1" ]]; then
@@ -131,6 +140,11 @@ jobs:
           elif [[ "$HAS_SHARDING" == "1" ]]; then
             echo "supported=true" >> "$GITHUB_OUTPUT"
             echo "run_shard=true" >> "$GITHUB_OUTPUT"
+            if [[ "$HAS_VPS_SQL_ROLE" == "1" ]]; then
+              echo "TEST_RUN_SQL_IN_INTEGRATION_SHARD_0=0" >> "$GITHUB_ENV"
+            else
+              echo "TEST_SHARD_0_OFFSET_SECONDS=150" >> "$GITHUB_ENV"
+            fi
             echo "Source repo supports integration sharding (role=${{ matrix.role }}, shard ${{ matrix.shard }}/${{ env.TEST_SHARD_TOTAL }})."
           else
             echo "supported=false" >> "$GITHUB_OUTPUT"
@@ -142,6 +156,16 @@ jobs:
               echo "Source repo lacks sharding support; shard ${{ matrix.shard }} exiting early."
             fi
           fi
+      - uses: actions/setup-python@v7
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' && matrix.role == 'vps-sql' }}
+        with:
+          python-version: "3.11"
+          architecture: x64
+      - uses: actions/setup-node@v7
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
+        with:
+          node-version: "24.15.0"
+          check-latest: false
       - name: Read pinned Flutter version from source repo
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         id: flutter-version
@@ -165,7 +189,7 @@ jobs:
           channel: "stable"
           cache: true
       - name: Read pinned Supabase CLI version from source repo
-        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' && (matrix.role == 'integration' || matrix.role == 'vps-sql') }}
         id: supabase-cli-version
         shell: bash
         run: |
@@ -181,7 +205,7 @@ jobs:
           echo "Using Supabase CLI $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: supabase/setup-cli@v3
-        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' && (matrix.role == 'integration' || matrix.role == 'vps-sql') }}
         with:
           version: ${{ steps.supabase-cli-version.outputs.version }}
       - uses: ruby/setup-ruby@v1
@@ -190,10 +214,17 @@ jobs:
           ruby-version: "3.3"
       - name: Run interpreter (execute 'run' steps from cloned workflow)
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
-        run: ruby .github/scripts/run_workflow_run_steps.rb --workflow repo/.github/workflows/tests-linux.yml --job layer2-tests --default-working-directory repo
+        env:
+          CI_LOG_PUBLIC_KEY: ${{ secrets.CI_LOG_PUBLIC_KEY }}
+        run: node .github/scripts/ci_crypto.mjs wrap -- ruby .github/scripts/run_workflow_run_steps.rb --workflow repo/.github/workflows/tests-linux.yml --job layer2-tests --default-working-directory repo
+      - name: Encrypt failure artifacts
+        if: ${{ failure() && steps.shard-support.outputs.run_shard == 'true' }}
+        env:
+          CI_LOG_PUBLIC_KEY: ${{ secrets.CI_LOG_PUBLIC_KEY }}
+        run: node .github/scripts/ci_crypto.mjs encrypt-artifact --base-dir repo/integration_test --out "$RUNNER_TEMP/layer2-screenshots-linux-${{ matrix.artifact_suffix }}.tar.gz.cenc1" screenshots
       - uses: actions/upload-artifact@v7
         if: ${{ failure() && steps.shard-support.outputs.run_shard == 'true' }}
         with:
           name: layer2-screenshots-linux-${{ matrix.artifact_suffix }}
-          path: repo/integration_test/screenshots/
+          path: ${{ runner.temp }}/layer2-screenshots-linux-${{ matrix.artifact_suffix }}.tar.gz.cenc1
           if-no-files-found: ignore

@@ -1,0 +1,147 @@
+name: Tool tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: "Source repo that triggered this workflow"
+        required: false
+        default: ""
+      source_ref:
+        description: "Git ref in the source repo to test (e.g. refs/pull/123/merge or refs/heads/main)"
+        required: false
+        default: ""
+      source_sha:
+        description: "Commit SHA in the source repo to test (optional)"
+        required: false
+        default: ""
+      source_pr:
+        description: "PR number in the source repo (optional)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: >-
+    tool-tests-${{ inputs.source_repo || github.repository }}-${{ inputs.source_pr || inputs.source_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Tool tests (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup SSH (deploy key)
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.REPO_SSH_KEY }}
+      - name: Trust github.com host key
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - name: Clone repository
+        run: git clone --quiet "${{ secrets.REPO_PATH }}" repo
+      - name: Checkout requested source ref/SHA (optional)
+        if: ${{ inputs.source_ref != '' || inputs.source_sha != '' }}
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.source_ref }}" ]; then
+            git fetch --quiet --no-tags --prune origin "${{ inputs.source_ref }}"
+            git checkout --quiet --detach FETCH_HEAD
+          elif [ -n "${{ inputs.source_sha }}" ]; then
+            git fetch --quiet --no-tags --prune origin "${{ inputs.source_sha }}" || true
+            git checkout --quiet --detach "${{ inputs.source_sha }}"
+          fi
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          architecture: x64
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          check-latest: false
+      - name: Read pinned Flutter version from source repo
+        id: flutter-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f repo/.flutter-version ]]; then
+            version="$(tr -d '\r\n' < repo/.flutter-version)"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid Flutter pin: $version" >&2; exit 1; }
+          else
+            version="3.41.2"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
+          channel: "stable"
+          cache: true
+      - name: Run Linux tool tests
+        env:
+          CI_LOG_PUBLIC_KEY: ${{ secrets.CI_LOG_PUBLIC_KEY }}
+        run: node .github/scripts/ci_crypto.mjs wrap --cwd repo -- bash .github/scripts/tool-tests/run-linux.sh
+
+  windows:
+    name: Tool tests (windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup SSH (deploy key)
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.REPO_SSH_KEY }}
+      - name: Clone repository
+        shell: pwsh
+        env:
+          GIT_SSH_COMMAND: ssh -o StrictHostKeyChecking=accept-new
+        run: git clone --quiet "${{ secrets.REPO_PATH }}" repo
+      - name: Checkout requested source ref/SHA (optional)
+        if: ${{ inputs.source_ref != '' || inputs.source_sha != '' }}
+        shell: pwsh
+        working-directory: repo
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ("${{ inputs.source_ref }}" -ne "") {
+            git fetch --quiet --no-tags --prune origin "${{ inputs.source_ref }}"
+            git checkout --quiet --detach FETCH_HEAD
+          } elseif ("${{ inputs.source_sha }}" -ne "") {
+            try { git fetch --quiet --no-tags --prune origin "${{ inputs.source_sha }}" } catch { }
+            git checkout --quiet --detach "${{ inputs.source_sha }}"
+          }
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          architecture: x64
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Read pinned Flutter version from source repo
+        id: flutter-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f repo/.flutter-version ]]; then
+            version="$(tr -d '\r\n' < repo/.flutter-version)"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid Flutter pin: $version" >&2; exit 1; }
+          else
+            version="3.41.2"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
+          channel: "stable"
+          cache: true
+      - name: Run Windows tool tests
+        shell: pwsh
+        env:
+          CI_LOG_PUBLIC_KEY: ${{ secrets.CI_LOG_PUBLIC_KEY }}
+        run: node .github/scripts/ci_crypto.mjs wrap --cwd repo -- pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .github/scripts/tool-tests/run-windows.ps1

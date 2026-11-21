@@ -42,6 +42,11 @@ jobs:
             - name: Trigger and wait for all platform test workflows
               id: dispatch_and_wait
               uses: actions/github-script@v9
+              env:
+                  INPUT_REF: ${{ inputs.ref }}
+                  INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+                  INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+                  INPUT_SOURCE_PR: ${{ inputs.source_pr }}
               with:
                   github-token: ${{ secrets.GITHUB_TOKEN }}
                   script: |
@@ -58,12 +63,11 @@ jobs:
                         "tests-web.yml",
                       ];
 
-                      const refInput = "${{ inputs.ref }}".trim();
+                      const refInput = (process.env.INPUT_REF || "").trim();
                       const ref = refInput || context.ref.replace(/^refs\/(heads|tags)\//, "");
-                      const sourceRepoInput = "${{ inputs.source_repo }}".trim();
-                      const sourceRefInput = "${{ inputs.source_ref }}".trim();
-                      const sourceShaInput = "${{ inputs.source_sha }}".trim();
-                      let sourcePrInput = "${{ inputs.source_pr }}".trim();
+                      const sourceRefInput = (process.env.INPUT_SOURCE_REF || "").trim();
+                      const sourceShaInput = (process.env.INPUT_SOURCE_SHA || "").trim();
+                      let sourcePrInput = (process.env.INPUT_SOURCE_PR || "").trim();
 
                       // Derive PR number from a refs/pull/<n>/... ref when not explicitly provided.
                       if (!sourcePrInput && /^refs\/pull\/(\d+)\//.test(sourceRefInput)) {
@@ -86,7 +90,6 @@ jobs:
 
                       const tokenUser = process.env.GITHUB_ACTOR;
                       const dispatchInputs = {
-                        ...(sourceRepoInput ? { source_repo: sourceRepoInput } : {}),
                         ...(sourceRefInput ? { source_ref: sourceRefInput } : {}),
                         ...(sourceShaInput ? { source_sha: sourceShaInput } : {}),
                         ...(sourcePrInput ? { source_pr: sourcePrInput } : {}),
@@ -292,12 +295,33 @@ jobs:
                     fi
                   done < failed-runs.tsv
 
+            - name: Checkout helper scripts for failure bundle encryption
+              if: ${{ always() && steps.dispatch_and_wait.outputs.any_failed == 'true' }}
+              uses: actions/checkout@v7
+              with:
+                  clean: false
+
+            - name: Setup Node for failure bundle encryption
+              if: ${{ always() && steps.dispatch_and_wait.outputs.any_failed == 'true' }}
+              uses: actions/setup-node@v7
+              with:
+                  node-version: "22"
+
+            - name: Encrypt downstream logs and artifacts bundles
+              if: ${{ always() && steps.dispatch_and_wait.outputs.any_failed == 'true' }}
+              env:
+                  CI_LOG_PUBLIC_KEY: ${{ secrets.CI_LOG_PUBLIC_KEY }}
+              run: |
+                  set -euo pipefail
+                  node .github/scripts/ci_crypto.mjs encrypt-artifact --out "$RUNNER_TEMP/downstream-logs-failed.tar.gz.cenc1" downstream-logs
+                  node .github/scripts/ci_crypto.mjs encrypt-artifact --out "$RUNNER_TEMP/downstream-artifacts-failed.tar.gz.cenc1" downstream-artifacts
+
             - name: Upload downstream logs bundle
               if: ${{ always() && steps.dispatch_and_wait.outputs.any_failed == 'true' }}
               uses: actions/upload-artifact@v7
               with:
                   name: downstream-logs-failed
-                  path: downstream-logs/
+                  path: ${{ runner.temp }}/downstream-logs-failed.tar.gz.cenc1
                   if-no-files-found: ignore
 
             - name: Upload downstream artifacts bundle
@@ -305,7 +329,7 @@ jobs:
               uses: actions/upload-artifact@v7
               with:
                   name: downstream-artifacts-failed
-                  path: downstream-artifacts/
+                  path: ${{ runner.temp }}/downstream-artifacts-failed.tar.gz.cenc1
                   if-no-files-found: ignore
 
             - name: Fail if any downstream workflow did not succeed
