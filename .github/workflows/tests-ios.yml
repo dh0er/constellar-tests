@@ -84,6 +84,52 @@ jobs:
               echo "Source repo lacks sharding support; shard ${{ matrix.shard }} exiting early."
             fi
           fi
+      - name: Select Xcode & pre-boot iOS Simulator in background
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          UDID="$(/usr/bin/python3 - <<'PY'
+          import json, os, re, subprocess, sys
+          data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"], text=True))
+          cands = []
+          for rt, devs in data.get("devices", {}).items():
+              if "iOS" not in rt:
+                  continue
+              for d in devs:
+                  if d.get("isAvailable", True) and "iPhone" in d.get("name", ""):
+                      cands.append((rt, d["name"], d["udid"]))
+          if not cands:
+              sys.exit(0)
+          def ver(rt):
+              m = re.search(r"iOS-(\d+)(?:-(\d+))?(?:-(\d+))?", rt)
+              return tuple(int(x) for x in m.groups(default="0")) if m else (0, 0, 0)
+          max_major = int(os.environ.get("IOS_MAX_RUNTIME_MAJOR", "27"))
+          stable = [c for c in cands if ver(c[0])[0] <= max_major]
+          if stable:
+              cands = stable
+          def form_rank(name):
+              if re.search(r"duo|fold|flip", name, re.IGNORECASE):
+                  return 0
+              if re.fullmatch(r"iPhone \d+", name):
+                  return 3
+              if re.fullmatch(r"iPhone \d+ (Pro|Plus)", name):
+                  return 2
+              return 1
+          rt, name, udid = max(cands, key=lambda t: (form_rank(t[1]) > 0, ver(t[0]), form_rank(t[1])))
+          print(f"Pre-booting iOS Simulator in background: {name} ({rt}) [{udid}]", file=sys.stderr)
+          print(udid)
+          PY
+          )"
+          if [[ -n "${UDID}" ]]; then
+            echo "IOS_PREBOOTED_UDID=${UDID}" >> "$GITHUB_ENV"
+            # Fire-and-forget boot via CoreSimulatorService without waiting for
+            # bootstatus: cold first-boot daemons now run in parallel with
+            # Flutter setup, SwiftPM cache restore, pub get, and build_runner.
+            xcrun simctl boot "${UDID}" >/dev/null 2>&1 || true
+          fi
       - uses: actions/setup-python@v7
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:
@@ -117,12 +163,6 @@ jobs:
           path: ~/Library/Caches/org.swift.swiftpm
           key: swiftpm-apple-v1-${{ hashFiles('repo/ios/Runner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'repo/macos/Runner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: swiftpm-apple-v1-
-      - name: Select Xcode
-        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
-        run: |
-          set -euo pipefail
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-          xcodebuild -version
       - uses: actions/setup-node@v7
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         with:

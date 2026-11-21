@@ -42,6 +42,10 @@ jobs:
             artifact_suffix: "host"
             role: "host"
             shard: "0"
+          - label: "sql"
+            artifact_suffix: "sql"
+            role: "sql"
+            shard: "0"
           - label: "shard 0"
             artifact_suffix: "shard-0"
             role: "integration"
@@ -54,13 +58,17 @@ jobs:
             artifact_suffix: "shard-2"
             role: "integration"
             shard: "2"
+          - label: "shard 3"
+            artifact_suffix: "shard-3"
+            role: "integration"
+            shard: "3"
     env:
       REPO_PATH: ${{ secrets.REPO_PATH }}
       ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
       TEST_RUNNER_ROLE: ${{ matrix.role }}
       TEST_SHARD_INDEX: ${{ matrix.shard }}
-      TEST_SHARD_TOTAL: "3"
-      TEST_SHARD_0_OFFSET_SECONDS: "75"
+      TEST_SHARD_TOTAL: "4"
+      TEST_SHARD_0_OFFSET_SECONDS: "0"
     steps:
       - uses: actions/checkout@v7
       - name: Setup SSH (deploy key)
@@ -94,6 +102,7 @@ jobs:
           HAS_SHARDING=0
           HAS_ROLE=0
           HAS_VPS_ROLE=0
+          HAS_SQL_ROLE=0
           if grep -q "TEST_SHARD_INDEX" repo/test.py 2>/dev/null; then
             HAS_SHARDING=1
           fi
@@ -102,6 +111,9 @@ jobs:
           fi
           if grep -q "vps-contract)" repo/.github/scripts/tests-linux/layer2-tests/run-tests.sh 2>/dev/null; then
             HAS_VPS_ROLE=1
+          fi
+          if grep -q "sql)" repo/.github/scripts/tests-linux/layer2-tests/run-tests.sh 2>/dev/null; then
+            HAS_SQL_ROLE=1
           fi
 
           if [[ "${{ matrix.role }}" == "vps-contract" ]]; then
@@ -113,6 +125,16 @@ jobs:
               echo "supported=false" >> "$GITHUB_OUTPUT"
               echo "run_shard=false" >> "$GITHUB_OUTPUT"
               echo "Source repo lacks vps-contract role split; host/shard 0 covers it."
+            fi
+          elif [[ "${{ matrix.role }}" == "sql" ]]; then
+            if [[ "$HAS_SQL_ROLE" == "1" ]]; then
+              echo "supported=true" >> "$GITHUB_OUTPUT"
+              echo "run_shard=true" >> "$GITHUB_OUTPUT"
+              echo "Source repo supports TEST_RUNNER_ROLE=sql split."
+            else
+              echo "supported=false" >> "$GITHUB_OUTPUT"
+              echo "run_shard=false" >> "$GITHUB_OUTPUT"
+              echo "Source repo lacks sql role split; integration shard 0 covers it."
             fi
           elif [[ "${{ matrix.role }}" == "host" ]]; then
             if [[ "$HAS_ROLE" == "1" ]]; then
@@ -127,6 +149,11 @@ jobs:
           elif [[ "$HAS_SHARDING" == "1" ]]; then
             echo "supported=true" >> "$GITHUB_OUTPUT"
             echo "run_shard=true" >> "$GITHUB_OUTPUT"
+            if [[ "$HAS_SQL_ROLE" == "1" ]]; then
+              echo "TEST_RUN_SQL_IN_INTEGRATION_SHARD_0=0" >> "$GITHUB_ENV"
+            else
+              echo "TEST_SHARD_0_OFFSET_SECONDS=150" >> "$GITHUB_ENV"
+            fi
             echo "Source repo supports integration sharding (role=${{ matrix.role }}, shard ${{ matrix.shard }}/${{ env.TEST_SHARD_TOTAL }})."
           else
             echo "supported=false" >> "$GITHUB_OUTPUT"
@@ -171,7 +198,7 @@ jobs:
           channel: "stable"
           cache: true
       - name: Read pinned Supabase CLI version from source repo
-        if: ${{ steps.shard-support.outputs.run_shard == 'true' && matrix.role == 'integration' }}
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' && (matrix.role == 'integration' || matrix.role == 'sql') }}
         id: supabase-cli-version
         shell: bash
         run: |
@@ -187,7 +214,7 @@ jobs:
           echo "Using Supabase CLI $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: supabase/setup-cli@v3
-        if: ${{ steps.shard-support.outputs.run_shard == 'true' && matrix.role == 'integration' }}
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' && (matrix.role == 'integration' || matrix.role == 'sql') }}
         with:
           version: ${{ steps.supabase-cli-version.outputs.version }}
       - uses: ruby/setup-ruby@v1
