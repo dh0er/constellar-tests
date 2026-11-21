@@ -117,15 +117,6 @@ jobs:
           path: ~/Library/Caches/org.swift.swiftpm
           key: swiftpm-apple-v1-${{ hashFiles('repo/ios/Runner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'repo/macos/Runner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: swiftpm-apple-v1-
-      - name: Cache CocoaPods (iOS)
-        if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cocoapods
-            repo/ios/Pods
-          key: pods-ios-v1-${{ hashFiles('repo/ios/Podfile.lock') }}
-          restore-keys: pods-ios-v1-
       - name: Select Xcode
         if: ${{ steps.shard-support.outputs.run_shard == 'true' }}
         run: |
