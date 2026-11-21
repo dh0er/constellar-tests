@@ -34,17 +34,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: "vps-contract"
-            artifact_suffix: "vps-contract"
-            role: "vps-contract"
+          - label: "vps-sql"
+            artifact_suffix: "vps-sql"
+            role: "vps-sql"
             shard: "0"
           - label: "host"
             artifact_suffix: "host"
             role: "host"
-            shard: "0"
-          - label: "sql"
-            artifact_suffix: "sql"
-            role: "sql"
             shard: "0"
           - label: "shard 0"
             artifact_suffix: "shard-0"
@@ -102,7 +98,7 @@ jobs:
           HAS_SHARDING=0
           HAS_ROLE=0
           HAS_VPS_ROLE=0
-          HAS_SQL_ROLE=0
+          HAS_VPS_SQL_ROLE=0
           if grep -q "TEST_SHARD_INDEX" repo/test.py 2>/dev/null; then
             HAS_SHARDING=1
           fi
@@ -112,29 +108,24 @@ jobs:
           if grep -q "vps-contract)" repo/.github/scripts/tests-linux/layer2-tests/run-tests.sh 2>/dev/null; then
             HAS_VPS_ROLE=1
           fi
-          if grep -q "sql)" repo/.github/scripts/tests-linux/layer2-tests/run-tests.sh 2>/dev/null; then
-            HAS_SQL_ROLE=1
+          if grep -q "vps-sql)" repo/.github/scripts/tests-linux/layer2-tests/run-tests.sh 2>/dev/null; then
+            HAS_VPS_SQL_ROLE=1
           fi
 
-          if [[ "${{ matrix.role }}" == "vps-contract" ]]; then
-            if [[ "$HAS_VPS_ROLE" == "1" ]]; then
+          if [[ "${{ matrix.role }}" == "vps-sql" ]]; then
+            if [[ "$HAS_VPS_SQL_ROLE" == "1" ]]; then
               echo "supported=true" >> "$GITHUB_OUTPUT"
               echo "run_shard=true" >> "$GITHUB_OUTPUT"
-              echo "Source repo supports TEST_RUNNER_ROLE=vps-contract split."
+              echo "Source repo supports TEST_RUNNER_ROLE=vps-sql combined role."
+            elif [[ "$HAS_VPS_ROLE" == "1" ]]; then
+              echo "supported=true" >> "$GITHUB_OUTPUT"
+              echo "run_shard=true" >> "$GITHUB_OUTPUT"
+              echo "TEST_RUNNER_ROLE=vps-contract" >> "$GITHUB_ENV"
+              echo "Source repo supports vps-contract only; running vps-contract (integration shard 0 covers sql)."
             else
               echo "supported=false" >> "$GITHUB_OUTPUT"
               echo "run_shard=false" >> "$GITHUB_OUTPUT"
-              echo "Source repo lacks vps-contract role split; host/shard 0 covers it."
-            fi
-          elif [[ "${{ matrix.role }}" == "sql" ]]; then
-            if [[ "$HAS_SQL_ROLE" == "1" ]]; then
-              echo "supported=true" >> "$GITHUB_OUTPUT"
-              echo "run_shard=true" >> "$GITHUB_OUTPUT"
-              echo "Source repo supports TEST_RUNNER_ROLE=sql split."
-            else
-              echo "supported=false" >> "$GITHUB_OUTPUT"
-              echo "run_shard=false" >> "$GITHUB_OUTPUT"
-              echo "Source repo lacks sql role split; integration shard 0 covers it."
+              echo "Source repo lacks vps-contract/vps-sql split; host/shard 0 covers it."
             fi
           elif [[ "${{ matrix.role }}" == "host" ]]; then
             if [[ "$HAS_ROLE" == "1" ]]; then
@@ -149,7 +140,7 @@ jobs:
           elif [[ "$HAS_SHARDING" == "1" ]]; then
             echo "supported=true" >> "$GITHUB_OUTPUT"
             echo "run_shard=true" >> "$GITHUB_OUTPUT"
-            if [[ "$HAS_SQL_ROLE" == "1" ]]; then
+            if [[ "$HAS_VPS_SQL_ROLE" == "1" ]]; then
               echo "TEST_RUN_SQL_IN_INTEGRATION_SHARD_0=0" >> "$GITHUB_ENV"
             else
               echo "TEST_SHARD_0_OFFSET_SECONDS=150" >> "$GITHUB_ENV"
@@ -166,7 +157,7 @@ jobs:
             fi
           fi
       - uses: actions/setup-python@v7
-        if: ${{ steps.shard-support.outputs.run_shard == 'true' && matrix.role == 'vps-contract' }}
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' && matrix.role == 'vps-sql' }}
         with:
           python-version: "3.11"
           architecture: x64
@@ -198,7 +189,7 @@ jobs:
           channel: "stable"
           cache: true
       - name: Read pinned Supabase CLI version from source repo
-        if: ${{ steps.shard-support.outputs.run_shard == 'true' && (matrix.role == 'integration' || matrix.role == 'sql') }}
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' && (matrix.role == 'integration' || matrix.role == 'vps-sql') }}
         id: supabase-cli-version
         shell: bash
         run: |
@@ -214,7 +205,7 @@ jobs:
           echo "Using Supabase CLI $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: supabase/setup-cli@v3
-        if: ${{ steps.shard-support.outputs.run_shard == 'true' && (matrix.role == 'integration' || matrix.role == 'sql') }}
+        if: ${{ steps.shard-support.outputs.run_shard == 'true' && (matrix.role == 'integration' || matrix.role == 'vps-sql') }}
         with:
           version: ${{ steps.supabase-cli-version.outputs.version }}
       - uses: ruby/setup-ruby@v1
