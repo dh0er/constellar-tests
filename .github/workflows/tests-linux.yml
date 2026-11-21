@@ -60,7 +60,7 @@ jobs:
       TEST_RUNNER_ROLE: ${{ matrix.role }}
       TEST_SHARD_INDEX: ${{ matrix.shard }}
       TEST_SHARD_TOTAL: "3"
-      TEST_SHARD_0_OFFSET_SECONDS: "150"
+      TEST_SHARD_0_OFFSET_SECONDS: "75"
     steps:
       - uses: actions/checkout@v7
       - name: Setup SSH (deploy key)
